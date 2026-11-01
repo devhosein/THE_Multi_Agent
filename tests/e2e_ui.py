@@ -367,8 +367,9 @@ with sync_playwright() as p:
     pg.screenshot(path=str(SHOTS / "31_room_fa_done.png"))
     # Which font really drew the text (asked from the browser engine itself). The code fonts have no Persian, and the
     # browser's fallback was a MONOSPACE Arabic font (Courier New) that splits words into separate letters.
+    # The samples have no spaces: a space is not Persian, so it rightly keeps the code font and would blur the result.
     pg.evaluate("""(() => { const code = document.querySelector('.code');
-      for (const [id, s] of [['probe-fa', 'سلام دنیا'], ['probe-en', 'const x = 1;']]) {
+      for (const [id, s] of [['probe-fa', 'سلامدنیا'], ['probe-en', 'const_x=1;']]) {
         const sp = document.createElement('span'); sp.id = id; sp.textContent = s; code.append(sp); } })()""")
     cdp = pg.context.new_cdp_session(pg)
     cdp.send("DOM.enable"); cdp.send("CSS.enable")
