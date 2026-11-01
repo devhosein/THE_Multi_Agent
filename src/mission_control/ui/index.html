@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mission Control</title>
+  <script src="i18n.js"></script>
+  <!-- Web fonts are optional polish: offline, the stacks fall back to Segoe UI / Tahoma / system fonts. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ───────────── start screen ───────────── -->
+<div id="start" class="screen start" hidden>
+  <main class="sheet">
+    <div class="langs" role="group" data-i18n-aria="lang.switch" aria-label="Language">
+      <button type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button type="button" data-lang="fa" aria-pressed="false">فا</button>
+    </div>
+    <header class="sheet-head">
+      <h1 data-i18n="start.title">What should we build?</h1>
+      <p class="lead" data-i18n="start.lead">Describe the project.</p>
+    </header>
+
+    <form id="startForm" autocomplete="off" novalidate>
+      <section class="field">
+        <label for="projectPath" data-i18n="start.folder">Project folder</label>
+        <div class="row">
+          <input id="projectPath" dir="ltr" spellcheck="false" data-i18n-ph="start.folder.ph">
+          <button type="button" id="pickFolder" class="btn" data-i18n="start.folder.browse">Browse…</button>
+        </div>
+        <p class="hint" data-i18n="start.folder.hint"></p>
+      </section>
+
+      <section class="field">
+        <label id="dropLabel"><span data-i18n="start.files">Input files</span> <span class="opt" data-i18n="start.optional">optional</span></label>
+        <div id="drop" class="drop" tabindex="0" role="button" aria-labelledby="dropLabel">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/></svg>
+          <span class="drop-text"><span data-i18n="start.files.drop">Drop files here or click to choose</span>
+            <small data-i18n="start.files.hint"></small></span>
+          <input id="fileInput" type="file" multiple hidden>
+        </div>
+        <ul id="fileList" class="files-chosen"></ul>
+      </section>
+
+      <section class="field">
+        <label for="prompt" data-i18n="start.prompt">Your request</label>
+        <textarea id="prompt" rows="2" data-i18n-ph="start.prompt.ph"></textarea>
+      </section>
+
+      <section class="field modefield">
+        <div class="moderow">
+          <span class="label" id="modeLabel" data-i18n="start.mode">Mode</span>
+          <div class="seg" role="radiogroup" aria-labelledby="modeLabel" id="modeSeg">
+            <button type="button" role="radio" aria-checked="true" data-mode="live" data-i18n="start.mode.live">Live</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="demo" data-i18n="start.mode.demo">Demo</button>
+          </div>
+          <p id="modeHint" class="modehint"></p>
+        </div>
+        <div id="liveOpts" class="opts">
+          <label class="inline" for="modelInput"><span data-i18n="start.model">Model</span>
+            <input id="modelInput" dir="ltr" spellcheck="false" list="modelList" value="ornith-1.5:9b">
+          </label>
+          <datalist id="modelList"></datalist>
+          <p id="modelStatus" class="status-line"></p>
+          <label class="check"><input type="checkbox" id="approvalToggle" checked> <span data-i18n="start.approval">Let me review the team and models before work starts</span></label>
+          <label class="check"><input type="checkbox" id="reviewToggle" checked> <span data-i18n="start.review">Let the lead agent revise the plan after each task</span></label>
+          <details class="adv">
+            <summary data-i18n="start.advanced">Advanced</summary>
+            <div class="adv-row">
+              <span class="label" id="strengthLabel" data-i18n="start.strength">Model strength</span>
+              <div class="seg" role="radiogroup" aria-labelledby="strengthLabel" id="strengthSeg">
+                <button type="button" role="radio" aria-checked="true" data-strength="auto" data-i18n="start.strength.auto">Auto</button>
+                <button type="button" role="radio" aria-checked="false" data-strength="small" data-i18n="strength.small">Small</button>
+                <button type="button" role="radio" aria-checked="false" data-strength="medium" data-i18n="strength.medium">Medium</button>
+                <button type="button" role="radio" aria-checked="false" data-strength="large" data-i18n="strength.large">Large</button>
+              </div>
+              <p id="strengthHint" class="modehint"></p>
+            </div>
+            <p class="hint" data-i18n="start.strength.explain"></p>
+            <div class="adv-row">
+              <label class="inline" for="ctxSelect"><span data-i18n="start.context">Context window</span>
+                <select id="ctxSelect">
+                  <option value="" data-i18n="start.context.default">Ollama default</option>
+                  <option value="16384">16K</option><option value="32768">32K</option>
+                  <option value="65536">64K</option><option value="131072">128K</option>
+                </select>
+              </label>
+            </div>
+          </details>
+        </div>
+        <div id="demoOpts" class="opts" hidden>
+          <span class="label" id="speedLabel" data-i18n="start.speed">Playback speed</span>
+          <div class="seg" role="radiogroup" aria-labelledby="speedLabel" id="speedSeg">
+            <button type="button" role="radio" aria-checked="false" data-speed="1">1×</button>
+            <button type="button" role="radio" aria-checked="true" data-speed="2">2×</button>
+            <button type="button" role="radio" aria-checked="false" data-speed="4">4×</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="actions">
+        <button id="startBtn" class="btn primary" type="submit" data-i18n="start.go">Start</button>
+      </footer>
+      <p id="startError" class="form-error" role="alert" hidden></p>
+    </form>
+    <div class="titleblock" aria-hidden="true"><span>Mission Control</span><span data-i18n="start.version">version 0.2</span></div>
+  </main>
+</div>
+
+<!-- ───────────── operations room ───────────── -->
+<div id="room" class="screen room" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="mark" aria-hidden="true"></span>Mission Control</div>
+    <div class="proj"><span class="proj-name" id="projName"></span></div>
+    <span id="runChip" class="chip"></span>
+    <span class="spacer"></span>
+    <dl class="usage">
+      <div><dt data-i18n="usage.in">Input</dt><dd id="tokIn">0</dd></div>
+      <div><dt data-i18n="usage.out">Output</dt><dd id="tokOut">0</dd></div>
+      <div><dt data-i18n="usage.time">Time</dt><dd id="elapsed">00:00</dd></div>
+    </dl>
+    <button id="btnLogs" class="btn logs-btn" type="button"><span data-i18n="btn.logs">Logs</span><span id="logBadge" class="count" hidden></span></button>
+    <button id="btnPauseAll" class="btn" data-i18n="btn.pauseAll">Pause all</button>
+    <button id="btnStop" class="btn danger" data-i18n="btn.stop">End run</button>
+    <button id="btnRetry" class="btn primary" hidden data-i18n="btn.retryFailed">Retry failed tasks</button>
+    <button id="btnNew" class="btn ghost" hidden data-i18n="btn.new">New project</button>
+    <div class="langs compact" role="group" data-i18n-aria="lang.switch" aria-label="Language">
+      <button type="button" data-lang="en" aria-pressed="true">EN</button>
+      <button type="button" data-lang="fa" aria-pressed="false">فا</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside id="plan" class="plan"></aside>
+
+    <section class="main">
+      <div id="stage" class="stage">
+        <svg id="bus" class="bus" aria-hidden="true"></svg>
+        <div id="orch" class="orch" role="button" tabindex="0"></div>
+        <div id="cards" class="cards"></div>
+        <section id="center" class="center" data-i18n-aria="files.title">
+          <header class="center-head">
+            <span class="center-title" data-i18n="files.title">Project files</span>
+            <span id="fileCount" class="center-count"></span>
+            <span class="spacer"></span>
+            <button id="followBtn" type="button" class="btn small" hidden data-i18n="files.follow">Follow live writing</button>
+          </header>
+          <div class="explorer">
+            <nav id="tree" class="tree"></nav>
+            <div class="viewer">
+              <div id="viewerHead" class="viewer-head"></div>
+              <div id="code" class="code" dir="ltr" tabindex="0"></div>
+              <p id="viewerEmpty" class="viewer-empty" data-i18n="files.empty"></p>
+            </div>
+          </div>
+        </section>
+        <div id="gate" class="gate" hidden></div>
+      </div>
+
+      <form id="dock" class="dock" autocomplete="off">
+        <button id="dockPreview" type="button" class="dock-preview" data-i18n-aria="dock.open"></button>
+        <div class="dock-row">
+          <textarea id="dockInput" rows="1" data-i18n-ph="dock.ph"></textarea>
+          <button class="btn primary" type="submit" data-i18n="btn.send">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <aside id="drawer" class="drawer" data-i18n-aria="drawer.label"></aside>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="modalRoot"></div>
+
+<script src="state.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

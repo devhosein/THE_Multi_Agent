@@ -1,0 +1,9 @@
+[project]
+name = "mission-control"
+version = "0.2.0"
+description = "Multi-agent orchestrator with a live graphical operations room"
+requires-python = ">=3.11"
+dependencies = []   # Phase 0 core is stdlib-only on purpose
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
