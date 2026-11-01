@@ -79,10 +79,13 @@ Rules:
 2. Write COMPLETE, working files. No placeholders, no "TODO", no "...".
 3. Long files: write_file the first part (about 150 lines), then append_file the rest in parts. Keep every call short enough.
 4. You cannot run programs, tests or shell commands here, so do not try and do not write scripts just to run things.
-   Your files are checked automatically after you finish.
+   Your files are checked automatically after you finish, including an integration check that starts the project's
+   server, loads every page with its scripts/styles/images and calls the API the way a browser does.
 5. When a tool returns ERROR, read why and change your approach. Never repeat a call that failed or changed nothing.
-6. If your work needs a change in a file you do not own (for example linking your stylesheet from index.html),
-   call note_to_lead with the exact change. Do not work around it.
+6. If your work needs a change in a file you do not own (for example linking your stylesheet from index.html, or the
+   backend must serve your pages / allow your requests), call note_to_lead AT ONCE with the exact change, like telling
+   your project manager. The lead answers within a step or two; meanwhile continue with your own files. Never work
+   around it and never assume the other side will "probably" match.
 7. Use relative paths from the project root, with forward slashes.
 8. As soon as every acceptance criterion is met, call finish with a short summary. Do not keep polishing.
 {chr(10) + WORKER_EXAMPLE + chr(10) if p.detailed else ''}
@@ -255,6 +258,65 @@ def lead_context(prompt: str, plan: Plan | None, statuses: Mapping[str, str]) ->
     return [{"role": "system", "content": "You are the lead orchestrator of a team of AI software agents. You planned the work, "
              "hand it out, check the results and adjust the plan.\n\nOriginal request:\n" + prompt +
              "\n\nCurrent plan and status:\n" + "\n".join(lines)}]
+
+
+# ------------------------------------------------------------------- a report from the team, handled at once
+
+NOTE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"reply": {"type": "string"}, "decision": {"type": "string"}, "replan": {"type": "boolean"},
+                   "reason": {"type": "string"}},
+    "required": ["reply", "decision", "replan", "reason"],
+    "additionalProperties": False,
+}
+
+NOTE_SYSTEM = """You are the lead orchestrator of a team of AI software agents, like a project manager. A report has just
+come in while the work is in progress: from one of your agents, or from the automatic integration check that runs the
+project. Handle it NOW, the way a good lead does when a team member says "I need a change in someone else's part".
+
+Answer ONLY with JSON: {"reply": "...", "decision": "...", "replan": true|false, "reason": "..."}
+- "reply": 1-3 sentences to the agent who reported it (or "" for the integration check): what to do right now. Agents may
+  only edit the files they own, so never ask them to change someone else's files.
+- "decision": a short shared rule that every agent must follow from now on, when the report shows the team needs one
+  (for example "The backend serves the HTML pages; the frontend calls the API with relative URLs like /api/menu"), or "".
+- "replan": true when work outside the reporting agent's files must change (another agent's file, a missing piece, a
+  wrong contract): you will then update the plan right away. false when the reply is enough.
+- "reason": one sentence: why.
+Write reply, decision and reason in the language of the original request."""
+
+
+@dataclass
+class NoteAnswer:
+    reply: str
+    decision: str
+    replan: bool
+    reason: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+    error: str | None = None
+
+
+def handle_note(llm: LLMClient, prompt: str, plan: Plan, statuses: Mapping[str, str], source: str, note: str,
+                decisions: str, ws: Workspace, *, retries: int = 1) -> NoteAnswer:
+    """`source` describes who reported it ("agent 'frontend' working on t3 …" or "the integration check")."""
+    lines = [f"- {t.id} [{t.role}] {t.title}: {statuses.get(t.id, 'pending')}; owns {', '.join(t.owns) or 'nothing'}"
+             for t in plan.tasks]
+    user = (f"Original request:\n{prompt}\n\nPlan and status:\n" + "\n".join(lines) +
+            f"\n\nFiles in the project:\n{project_tree(ws)}\n\nDecisions so far:\n{decisions.strip() or '(none)'}\n\n"
+            f"Report from {source}:\n{note}")
+
+    def validate(obj: Any) -> list[str]:
+        return [] if isinstance(obj, dict) and isinstance(obj.get("replan"), bool) else ['"replan" must be true or false']
+
+    try:
+        res = generate_structured(llm, [{"role": "system", "content": NOTE_SYSTEM}, {"role": "user", "content": user}],
+                                  schema=NOTE_SCHEMA, validate=validate, retries=retries, temperature=0.2)
+    except (StructuredOutputError, LLMError) as e:
+        # the lead could not think it through: never drop the report, let the plan review deal with it
+        return NoteAnswer("", "", True, "the lead could not answer; the plan review will handle it", error=str(e))
+    v = res.value
+    return NoteAnswer(str(v.get("reply", "")).strip(), str(v.get("decision", "")).strip(), bool(v["replan"]),
+                      str(v.get("reason", "")).strip(), res.tokens_in, res.tokens_out)
 
 
 # ------------------------------------------------------------------- rescuing a failed task

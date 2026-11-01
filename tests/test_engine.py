@@ -285,15 +285,39 @@ class Replanning(unittest.TestCase):
         _, ev = run_engine(llm, review=True)
         self.assertEqual(of(ev, EV.PLAN_UPDATED), [])
 
-    def test_worker_notes_reach_the_review(self):
+    def test_a_report_reaches_the_lead_at_once_and_its_answer_reaches_the_agent(self):
+        """Like a team member telling the project manager: the lead answers at the agent's next step, not after the task."""
         w = happy_workers()
         w["t1"] = [call("note_to_lead", text="the contract has no auth section"), CONTRACT, FINISH]
-        llm = ScriptedLLM(workers=w)
+        llm = ScriptedLLM(workers=w, notes={"reply": "Add a short auth section: bearer tokens.", "replan": False,
+                                            "decision": "The API uses bearer tokens.", "reason": "missing in the contract"})
+        s, evs = run_engine(llm, review=True)
+        order = [(k, t) for k, t, _ in llm.calls]
+        self.assertLess(order.index(("note", None)), [i for i, c in enumerate(order) if c == ("worker", "t1")][1],
+                        "the lead must answer before the agent's next step")
+        self.assertIn("the contract has no auth section", llm.kinds("note")[0][2][-1]["content"])
+        second_step = llm.kinds("worker", "t1")[1][2]
+        self.assertIn("Message from the lead agent", second_step[-1]["content"])
+        self.assertIn("bearer tokens", second_step[-1]["content"])
+        self.assertIn("The API uses bearer tokens.", [e.data["text"] for e in evs if e.type == "decision.recorded"])
+        said = [e.data["text"] for e in evs if e.type == "agent.message" and e.agent_id == "orchestrator"]
+        self.assertIn("Add a short auth section: bearer tokens.", said)
+        self.assertTrue(any("[to the lead] the contract has no auth section" == e.data["text"] for e in evs
+                            if e.type == "agent.message" and e.agent_id == "a_t1"))
+        assert_valid(self, evs)
+
+    def test_a_report_that_needs_another_agent_changes_the_plan_right_away(self):
+        w = happy_workers()
+        w["t2"] = [call("note_to_lead", text="the frontend must call /api/menu, not /menu"), APP_PY, FINISH]
+        llm = ScriptedLLM(workers=w, notes={"reply": "Keep going; I am telling the frontend.", "decision": "",
+                                            "replan": True, "reason": "the frontend task must change"})
         run_engine(llm, review=True)
-        first_review = llm.kinds("review")[0][2][-1]["content"]
-        self.assertIn("the contract has no auth section", first_review)
-        self.assertIn("[t1]", first_review)
-        self.assertNotIn("the contract has no auth section", llm.kinds("review")[1][2][-1]["content"])   # consumed once
+        order = [(k, t) for k, t, _ in llm.calls]
+        t2_steps = [i for i, c in enumerate(order) if c == ("worker", "t2")]
+        reviews = [i for i, c in enumerate(order) if c == ("review", None)]
+        self.assertTrue(any(t2_steps[0] < r < t2_steps[1] for r in reviews), f"no plan review during t2: {order}")
+        review = next(c for c in llm.kinds("review") if "the frontend must call /api/menu" in c[2][-1]["content"])
+        self.assertIn("Report from the backend agent working on t2", review[2][-1]["content"])
 
     def test_the_review_sees_what_really_happened(self):
         llm = ScriptedLLM()

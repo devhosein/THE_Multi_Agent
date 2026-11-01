@@ -36,7 +36,8 @@ browser UI (ui/*.js)  ◄── SSE /api/events (Last-Event-ID = after_seq) ─�
       └── POST /api/run|message|command|approve|resolve|retry|upload|pick-folder|reset,  GET /api/report|models|fs|status
 session = EngineSession (engine.py, live) | MockSession (session.py, demo replay of mock.py)
 engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + tools.py (sandboxed) → checks.py
-        → orchestrator.py (lead: briefing, plan review, failure diagnosis, answering the user) → profiles.py (model strength)
+        → integration.py (runs the whole project like a browser) → orchestrator.py (lead: briefing, plan review,
+        reports from agents, failure diagnosis, answering the user) → profiles.py (model strength)
 ```
 - **The UI is a pure function of the event stream** (`ui/state.js` reducer, also tested in Node). Demo and engine emit
   the same events. Contract: `src/mission_control/events.py` (+ `docs/EVENTS.md`). `check_stream()` validates whole runs.
@@ -45,6 +46,12 @@ engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + to
   → plan review after each task → `run.finished`. "Retry failed tasks" = `EngineSession.continuation(old)`.
 - User messages are answered at the next safe point by the addressed agent (`orchestrator.answer_user`); only
   instructions become decisions in `.mission/decisions.md` (shared with all later agents).
+- **The lead acts like a project manager during the work**: an agent's `note_to_lead` is handled at its next step
+  (`orchestrator.handle_note`: reply to the agent, shared decision, or an immediate plan review). After every task
+  `integration.py` runs the project; problems in the agent's own files are retried by it, problems between agents
+  become a `fixN` task right after the current one (later pending tasks then depend on it); a final check runs
+  after the last task, and the run is `failed` if problems remain. Measure changes with `eval/` (see
+  `eval/results/README.md`: baseline 53/100 vs a single agent's 85).
 
 ## Rules (keep them; tests enforce most)
 1. **New event type** → `T` + `SPEC` in `events.py`, `docs/EVENTS.md`, reducer in `ui/state.js`, `textview.py`,

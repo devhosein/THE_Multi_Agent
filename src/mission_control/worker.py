@@ -160,9 +160,11 @@ def run_worker(
     log: LogFn = lambda *a, **k: None,
     limits: WorkerLimits | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    deliver_lead: Callable[[], list[str]] = lambda: [],
 ) -> WorkerResult:
     """`reply(messages, text)` answers a user message in this agent's voice and returns the instruction it carries
-    (or None for a plain question). `deliver()` hands over the user's messages at each safe point."""
+    (or None for a plain question). `deliver()` hands over the user's messages at each safe point, `deliver_lead()`
+    the lead agent's answers to this agent's reports (and any other word from the lead)."""
     lim = limits or WorkerLimits()
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     nudged = False
@@ -172,9 +174,14 @@ def run_worker(
         gate()
         for text in deliver():                       # answer first, then carry on with it in mind
             instruction = reply(messages, text)
+            # a question is NOT repeated here: shown the question again, models answered it a second time (real run)
             messages.append({"role": "user", "content": (
                 f"Instruction from the user (you have already replied to them): {instruction}\nApply it to your work."
-                if instruction else f"(The user asked: {text!r}. You have already answered. Continue your task.)")})
+                if instruction else "(The user's question has already been answered for you. Do not answer it again; "
+                "continue your task.)")})
+        for text in deliver_lead():
+            messages.append({"role": "user", "content": f"Message from the lead agent (your project manager): {text}\n"
+                             "Follow it. Then continue your task."})
         compact(messages)
         try:
             res = call_model(llm, messages, tools=TOOL_SPECS, temperature=lim.temperature, limits=lim, log=log,

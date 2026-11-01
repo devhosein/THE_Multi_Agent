@@ -30,7 +30,11 @@ Rules:
    overlapping paths. If they would overlap, make one depend on the other.
 3. If several tasks must agree on an interface (for example frontend and backend), create
    a FIRST task that writes that interface/contract under "contracts/", and make the
-   dependent tasks depend on it.
+   dependent tasks depend on it. The contract must contain a section "## Integration" that
+   settles how the parts run TOGETHER: which program serves the pages, on which port, the
+   exact URLs the frontend calls, and the start command. Recommended for web apps: the
+   backend serves the pages too (same origin) and the frontend calls relative URLs like
+   /api/menu (no CORS needed). Put this in that task's acceptance criteria.
 4. Never use ".mission" in owns.
 5. Write title and goal in the same language as the user's request. Keep id and role in English.
 """

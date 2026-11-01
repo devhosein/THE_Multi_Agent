@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from typing import Sequence
 
 from .plan import Task
 from .workspace import Workspace
+
+# A contract must say how the parts run together (real run cafe-35b: the contract described every endpoint but not who
+# serves the pages, so the frontend and the backend each assumed something different).
+INTEGRATION_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*(?:\d+[.)]\s*)?integration\b", re.I | re.M)
 
 
 def check_task(ws: Workspace, task: Task, written: Sequence[str]) -> list[str]:
@@ -44,4 +49,9 @@ def check_task(ws: Workspace, task: Task, written: Sequence[str]) -> list[str]:
         elif suffix == ".css":
             if text.count("{") != text.count("}"):
                 problems.append(f"{rel}: unbalanced braces in CSS")
+        if rel.startswith("contracts/") and suffix in (".md", ".txt") and not INTEGRATION_HEADING.search(text):
+            problems.append(f"{rel}: the contract has no \"## Integration\" section. Add one that settles how the parts "
+                            "run together: which program serves the pages, the port, the exact URLs the frontend calls "
+                            "(recommended: the backend serves the pages and the frontend calls relative URLs like "
+                            "/api/menu), and the start command.")
     return problems

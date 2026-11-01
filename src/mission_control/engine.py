@@ -26,9 +26,10 @@ from .checks import check_task
 from .eventlog import EventLog
 from .events import AGENT_TRANSITIONS, COMMANDS, ORCHESTRATOR_ID, RESOLUTIONS, T
 from .llm import LLMClient, LLMError, StructuredOutputError
+from .integration import Problem, check_integration
 from .orchestrator import (INFRA_KINDS, answer_user, build_worker_system, build_worker_user, diagnose_failure,
-                           lead_context, review_plan)
-from .plan import Plan, Task, diff_plans, plan_stages
+                           handle_note, lead_context, review_plan)
+from .plan import Plan, PlanError, Task, diff_plans, path_allowed, plan_stages, validate_replan
 from .planner import make_plan
 from .profiles import Profile, detect, resolve
 from .session import MAX_MESSAGE_CHARS, SessionError, rotate_events_file
@@ -67,6 +68,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "already_pausing": "Already pausing.",
         "finished_chat": "This run has finished. Start a new run to continue.",
         "target_note": "Pause and stop apply to the whole run (agents currently work one after another).",
+        "note_received": "{agent} reported a problem to the lead",
+        "integration_ok": "Integration check passed: the parts work together",
+        "integration_own": "“{title}”: the integration check found problems in its own files",
+        "integration_cross": "The integration check found {n} problem(s) between agents; adding a fix task",
+        "final_check": "Final check of the whole project…",
+        "done_integration": "All tasks finished, but the parts still do not work together: {n} integration problem(s) remain.",
     },
     "fa": {
         "analyzing": "در حال تحلیل درخواست…",
@@ -98,6 +105,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "already_pausing": "همین حالا در حال توقف است.",
         "finished_chat": "این اجرا تمام شده است. برای ادامه یک اجرای جدید شروع کن.",
         "target_note": "توقف و پایان برای کل اجرا اعمال می‌شود (ایجنت‌ها فعلاً یکی‌یکی کار می‌کنند).",
+        "note_received": "{agent} مشکلی را به ایجنت راس گزارش داد",
+        "integration_ok": "بررسی اتصال موفق بود: بخش‌ها با هم کار می‌کنند",
+        "integration_own": "«{title}»: بررسی اتصال در فایل‌های خودش مشکل پیدا کرد",
+        "integration_cross": "بررسی اتصال {n} مشکل بین ایجنت‌ها پیدا کرد؛ یک تسک اصلاح اضافه می‌شود",
+        "final_check": "بررسی نهایی کل پروژه…",
+        "done_integration": "همه‌ی تسک‌ها تمام شد، ولی بخش‌ها هنوز با هم کار نمی‌کنند: {n} مشکل اتصال باقی مانده.",
     },
 }
 
@@ -120,6 +133,8 @@ class EngineConfig:
     chunk_delay_cap: float = 0.02       # pacing of the file "typing" events (0 = instant)
     backoff: tuple[float, ...] = (2.0, 5.0, 10.0)
     context: str = "Ollama default"     # informational: shown in the logs and the report
+    integration: bool = True            # run the project after each task and at the end (integration.py)
+    integration_fixes: int = 3          # how many fix tasks the engine may add for problems between agents
 
 
 @dataclass
@@ -172,6 +187,14 @@ class EngineSession:
         self._inbox: list[tuple[str, str]] = []
         self._pending_for_agent: dict[str, list[str]] = {}
         self._lead_instructions: list[str] = []
+        self._escalations: list[tuple[str | None, str | None, str, str]] = []   # (task, agent, who, report)
+        self._lead_msgs: dict[str, list[str]] = {}       # the lead's answers, delivered at the agent's next step
+        self._reports: dict[str, list[str]] = {}         # every report per task (for the failure diagnosis)
+        self._serving_reports = False
+        self._cross: list[Problem] = []                  # integration problems between agents, found after a task
+        self._fixes = 0
+        self._final_reviews = 0
+        self._integration_left: list[Problem] = []
         self._running_agent: str | None = None
         self._awaiting_approval = False
         self._approved: dict[str, str] | None = None
@@ -388,6 +411,7 @@ class EngineSession:
         if self._stop.is_set():
             raise StopRun()
         self._serve_inbox()
+        self._serve_reports()
         if not self._pause_requested:
             return
         paused_agent = agent_id if agent_id and self._agent_state.get(agent_id) == "running" else None
@@ -409,6 +433,129 @@ class EngineSession:
             self._wake.clear()
         if self._stop.is_set():
             raise StopRun()
+
+    # ------------------------------------------------------------ reports to the lead, handled at once
+    def _report(self, task: Task, aid: str, text: str) -> None:
+        """An agent's note_to_lead: like telling the project manager. The lead answers at the agent's next step."""
+        self._emit(T.AGENT_MESSAGE, {"role": "agent", "text": f"[to the lead] {text}"}, agent_id=aid)
+        self._log("info", "report", f"{aid} reported to the lead", text, task_id=task.id, agent_id=aid)
+        self._reports.setdefault(task.id, []).append(text)
+        who = f"the {task.role} agent working on {task.id} \u201c{task.title}\u201d (it owns {', '.join(task.owns) or 'nothing'})"
+        self._escalations.append((task.id, aid, who, text))
+
+    def _serve_reports(self) -> None:
+        if self._serving_reports or self._plan is None:
+            return
+        self._serving_reports = True          # a plan review below passes safe points: never handle reports nested
+        try:
+            while self._escalations:
+                tid, aid, who, text = self._escalations.pop(0)
+                self._lead_reacts(tid, aid, who, text)
+        finally:
+            self._serving_reports = False
+
+    def _lead_reacts(self, tid: str | None, aid: str | None, who: str, text: str) -> str:
+        """The lead answers a report right away: a reply to the agent, a shared decision, and/or a plan change."""
+        assert self._plan is not None
+        if aid:
+            self._line("note_received", agent=next((t.role for t in self._plan.tasks if t.id == tid), aid))
+        ans = handle_note(self.llm, self.prompt, self._plan, self._status, who, text, self._decisions_text(), self.ws,
+                          retries=self.cfg.review_retries)
+        self._usage(ans.tokens_in, ans.tokens_out)
+        self._log("info" if not ans.error else "warn", "lead", f"Handled a report from {who}: "
+                  + ("plan change" if ans.replan else "answered"),
+                  f"Report: {text}\n\nReply: {ans.reply}\nDecision: {ans.decision}\nReason: {ans.reason}"
+                  + (f"\nError: {ans.error}" if ans.error else ""), task_id=tid)
+        if ans.reply:
+            self._say(ans.reply)
+            if aid:
+                self._lead_msgs.setdefault(aid, []).append(ans.reply)
+        if ans.decision:
+            self._record_decision(ans.decision, "orchestrator")
+        if ans.replan and aid:
+            self._lead_instructions.append(f"Report from {who}: {text}" + (f" (you answered: {ans.reply})" if ans.reply else ""))
+            if self.cfg.review:
+                self._review()
+        return ans.reply or ans.reason
+
+    # ------------------------------------------------------------ integration: do the parts work together?
+    def _owners(self, path: str) -> list[str]:
+        assert self._plan is not None
+        return [t.id for t in self._plan.tasks if path_allowed(path, t.owns)]
+
+    def _integration(self, task: Task | None) -> tuple[list[Problem], list[Problem]]:
+        """Run the project. Problems inside `task`'s own files go back to its agent; the rest are between agents."""
+        report = check_integration(self.ws.root)
+        detail = "\n".join(f"- [{p.kind}] {p.message} (files: {', '.join(p.files)})" for p in report.problems)
+        self._log("info" if not report.problems else "warn", "integration", report.summary(),
+                  "\n".join(filter(None, [detail, *report.notes])) or None, task_id=task.id if task else None)
+        own, cross = [], []
+        for prob in report.problems:
+            owners = {o for f in prob.files if f for o in self._owners(f)}
+            (own if task is not None and owners <= {task.id} else cross).append(prob)
+        return own, cross
+
+    def _add_fix_task(self, problems: list[Problem], after: str | None) -> bool:
+        """A task owning exactly the files involved, right after `after`, so the next agent fixes the seam."""
+        assert self._plan is not None
+        if self._fixes >= self.cfg.integration_fixes:
+            return False
+        files = sorted({f for p in problems for f in p.files if f and self._owners(f)})
+        if not files:
+            return False
+        listing = "\n".join(f"- {p.message}" for p in problems)
+        guidance = self._lead_reacts(None, None, "the integration check (it started the server, loaded the pages and "
+                                     "called the API like a browser)", listing)
+        self._fixes += 1
+        owners = sorted({o for f in files for o in self._owners(f)})
+        fix = Task(id=f"fix{self._fixes}", title="Make the parts work together", role="integrator",
+                   goal="The automatic integration check ran the project like a browser and found:\n" + listing
+                   + (f"\n\nThe lead says: {guidance}" if guidance else "")
+                   + "\nChange only what is needed so that every part works with the others.",
+                   depends_on=tuple(o for o in owners if self._status.get(o) != "skipped"), owns=tuple(files),
+                   acceptance=tuple(["The integration check finds none of these problems any more."]
+                                    + [p.message[:240] for p in problems[:3]]))
+        tasks: list[Task] = []
+        for t in self._plan.tasks:
+            if self._status.get(t.id, "pending") == "pending" and set(t.depends_on) & set(owners):
+                t = Task(t.id, t.title, t.role, t.goal, t.depends_on + (fix.id,), t.owns, t.acceptance)
+            tasks.append(t)
+            if t.id == after:
+                tasks.append(fix)
+        if fix not in tasks:
+            tasks.append(fix)
+        try:
+            new = Plan(self._plan.version + 1, tuple(tasks))
+            errors = validate_replan(self._plan, new, self._status)
+        except PlanError as e:
+            errors = [str(e)]
+        if errors:
+            self._log("warn", "integration", "Could not add a fix task; the lead's review will handle the problems",
+                      "\n".join(errors))
+            self._lead_instructions.append("The integration check found problems between agents:\n" + listing)
+            return False
+        self._line("integration_cross", n=len(problems))
+        self._apply_update(new, "Integration check: " + ", ".join(sorted({p.kind for p in problems})))
+        return True
+
+    def _final_check(self) -> bool:
+        """After the last task: the lead's final review and one more integration check. True if work was added."""
+        assert self._plan is not None
+        if self.cfg.review and self._lead_instructions and self._final_reviews < 2:
+            self._final_reviews += 1
+            self._review()
+            if any(self._status[t.id] == "pending" for t in self._plan.tasks):
+                return True
+        if not self.cfg.integration:
+            return False
+        self._line("final_check")
+        _, problems = self._integration(None)
+        self._integration_left = problems
+        if not problems:
+            self._line("integration_ok")
+            return False
+        last = next((t.id for t in reversed(self._plan.tasks) if self._status.get(t.id) == "verified"), None)
+        return self._add_fix_task(problems, last)
 
     # ------------------------------------------------------------ answering the user
     def _take_for_agent(self, agent_id: str) -> list[str]:
@@ -574,6 +721,8 @@ class EngineSession:
             self._checkpoint()
             pending = [t for t in self._plan.tasks if self._status[t.id] == "pending"]
             if not pending:
+                if self._final_check():
+                    continue
                 break
             ready = [t for t in pending if all(self._status.get(d) == "verified" for d in t.depends_on)]
             if not ready:                      # everything left depends on failed/skipped work
@@ -582,11 +731,16 @@ class EngineSession:
                     self._set_task(t.id, "skipped")
                 break
             self._execute(ready[0])
+            cross, self._cross = self._cross, []
+            if cross and self._status.get(ready[0].id) == "verified":
+                self._add_fix_task(cross, ready[0].id)
             if self.cfg.review and any(self._status[t.id] == "pending" for t in self._plan.tasks):
                 self._review()
         total = len(self._plan.tasks)
         bad = sum(1 for t in self._plan.tasks if self._status[t.id] != "verified")
-        msg = self._s("done_failed", bad=bad, n=total) if bad else self._s("done_ok")
+        msg = self._s("done_failed", bad=bad, n=total) if bad else \
+            self._s("done_integration", n=len(self._integration_left)) if self._integration_left else self._s("done_ok")
+        bad = bad or len(self._integration_left)
         self._say(msg)
         self._end("failed" if bad else "completed", msg)
 
@@ -638,7 +792,8 @@ class EngineSession:
             self._set_task(task.id, "running")
             self._set_agent(aid, "running")
             box = ToolBox(self.ws, task.owns, self.log, aid, chunk_delay_cap=self.cfg.chunk_delay_cap,
-                          emit=lambda type_, data, _a=aid: self._emit(type_, data, agent_id=_a), read_chars=prof.read_chars)
+                          emit=lambda type_, data, _a=aid: self._emit(type_, data, agent_id=_a), read_chars=prof.read_chars,
+                          on_note=lambda text, _t=task, _a=aid: self._report(_t, _a, text))
             box.written = list(self._written.get(task.id, []))      # files from earlier attempts still count
             system = build_worker_system(task, self._plan, self.ws, self._decisions_text(), prof)
             user = build_worker_user(feedback, box.written, self._pending_for_agent.pop(aid, []), guidance)
@@ -660,13 +815,18 @@ class EngineSession:
                     reply=lambda msgs, text, _a=aid, _m=model: self._reply_as_running(_a, _m, msgs, text),
                     on_message=said, on_usage=self._usage,
                     log=lambda level, source, message, detail=None, _a=aid, _t=task.id: self._log(level, source, message, detail, task_id=_t, agent_id=_a),
-                    limits=limits, sleep=self._sleep)
+                    limits=limits, sleep=self._sleep, deliver_lead=lambda _a=aid: self._lead_msgs.pop(_a, []))
             finally:
                 self._running_agent = None
             self._written[task.id] = box.written
             self._notes.extend((task.id, n) for n in box.notes)
             problems = check_task(self.ws, task, box.written) if result.ok else [result.error or "the agent failed"]
             kind = "" if not problems else (result.kind or "checks") if not result.ok else "checks"
+            if not problems and self.cfg.integration:
+                own, self._cross = self._integration(task)
+                if own:
+                    self._line("integration_own", title=task.title)
+                    problems, kind = [f"integration check: {p.message}" for p in own], "integration"
             if not problems:
                 self._results[task.id] = result.summary
                 self._set_task(task.id, "done")
@@ -690,7 +850,8 @@ class EngineSession:
         assert self._plan is not None
         self._line("diagnosing", title=task.title)
         diag = diagnose_failure(self.llm, self.prompt, task, self._plan, self._status, self._history.get(task.id, []),
-                                self._written.get(task.id, []), [n for t, n in self._notes if t == task.id],
+                                self._written.get(task.id, []),
+                                [n for t, n in self._notes if t == task.id] + self._reports.get(task.id, []),
                                 "\n---\n".join(self._last_words.get(task.id, [])), self.ws, retries=self.cfg.review_retries)
         self._usage(diag.tokens_in, diag.tokens_out)
         self._log("info" if not diag.error else "warn", "lead", f"Diagnosis for {task.id}: {diag.action}",

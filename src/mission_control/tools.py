@@ -47,7 +47,9 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
     {"type": "function", "function": {
         "name": "note_to_lead",
-        "description": "Send a short note to the lead agent, e.g. when the plan or a contract has a problem. The lead reads it after your task.",
+        "description": "Report to the lead agent AT ONCE when you find a problem you cannot fix in your own files: a "
+                       "change needed in a file another agent owns, a contract that is wrong or unclear, a missing piece. "
+                       "The lead answers within a step or two and can change the plan.",
         "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}},
     {"type": "function", "function": {
         "name": "finish",
@@ -60,7 +62,7 @@ class ToolBox:
     """One instance per task; remembers what the task wrote so the checks and the lead can use it."""
 
     def __init__(self, ws: Workspace, owns: Iterable[str], log: EventLog, agent_id: str,
-                 *, chunk_delay_cap: float = 0.02, emit=None, read_chars: int = MAX_READ_BYTES) -> None:
+                 *, chunk_delay_cap: float = 0.02, emit=None, read_chars: int = MAX_READ_BYTES, on_note=None) -> None:
         self.ws = ws
         self.owns = tuple(owns)
         self.log = log
@@ -68,6 +70,7 @@ class ToolBox:
         self.chunk_delay_cap = chunk_delay_cap
         self._emit = emit or (lambda type_, data: log.append(type_, data, agent_id=agent_id))
         self.read_chars = read_chars
+        self.on_note = on_note           # the engine's live channel to the lead (None: notes wait for the review)
         self.written: list[str] = []
         self.notes: list[str] = []
         self.finished: str | None = None
@@ -241,7 +244,11 @@ class ToolBox:
         text = args.get("text")
         if not isinstance(text, str) or not text.strip():
             return "ERROR: text is required"
-        self.notes.append(text.strip()[:1000])
+        text = text.strip()[:1000]
+        if self.on_note is not None:
+            self.on_note(text)
+            return "OK: the lead agent has your report and will answer shortly. Continue with your own files meanwhile."
+        self.notes.append(text)
         return "OK: the lead agent will read your note after this task"
 
     def _finish(self, args: dict[str, Any]) -> str:

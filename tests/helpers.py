@@ -24,7 +24,8 @@ T2 = T("t2", "Backend", "backend", ["t1"], ["backend/**"])
 T3 = T("t3", "Frontend", "frontend", ["t1"], ["frontend/**"])
 PLAN3 = {"tasks": [T1, T2, T3]}
 
-CONTRACT = call("write_file", path="contracts/api.md", content="# API\nGET /api/menu\n")
+CONTRACT = call("write_file", path="contracts/api.md",
+                content="# API\nGET /api/menu\n\n## Integration\nThe backend serves the pages; the frontend calls /api/menu.\n")
 APP_PY = call("write_file", path="backend/app.py", content="def menu():\n    return []\n")
 INDEX = call("write_file", path="frontend/index.html", content="<!doctype html><title>x</title><h1>Menu</h1>\n")
 FINISH = call("finish", summary="done")
@@ -38,12 +39,13 @@ class ScriptedLLM:
     """chat() looks like the real client; replies come from per-task scripts.
     `plan` / `reviews` may be a dict/str or a list of them (consumed one per call, the last one repeats)."""
 
-    def __init__(self, plan=PLAN3, workers=None, reviews=None, on_worker=None, replies=None, diagnoses=None):
+    def __init__(self, plan=PLAN3, workers=None, reviews=None, on_worker=None, replies=None, diagnoses=None, notes=None):
         self.plan = plan
         self.workers = {k: list(v) for k, v in (workers or happy_workers()).items()}
         self.reviews = reviews
         self.replies = replies
         self.diagnoses = diagnoses
+        self.notes = notes
         self.on_worker = on_worker
         self.calls = []           # (kind, task_id, messages)
 
@@ -72,6 +74,11 @@ class ScriptedLLM:
             r = self._pick(self.diagnoses, {"diagnosis": "unclear", "user_summary": "The task kept failing.",
                                             "suggestions": ["Retry"], "action": "ask_user", "guidance": "", "tasks": []})
             return ChatResult(content=r if isinstance(r, str) else json.dumps(r), tokens_in=150, tokens_out=50)
+        if "replan" in props:
+            self.calls.append(("note", None, [dict(m) for m in messages]))
+            r = self._pick(self.notes, {"reply": "Understood, carry on with your own files.", "decision": "",
+                                        "replan": False, "reason": "the reply is enough"})
+            return ChatResult(content=r if isinstance(r, str) else json.dumps(r), tokens_in=120, tokens_out=40)
         if "reply" in props:
             self.calls.append(("reply", None, [dict(m) for m in messages]))
             m = re.search(r'while you work:\n"(.*)"\n\n', messages[-1]["content"], re.S)
