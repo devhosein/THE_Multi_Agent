@@ -100,7 +100,7 @@ class ToolBoxTests(unittest.TestCase):
     def test_long_files_are_paged_and_nothing_is_lost(self):
         box = ToolBox(self.ws, ["backend/**"], self.log, "a1", chunk_delay_cap=0, read_chars=1000)
         lines = [f"line {i:04d} " + "x" * 40 + "\n" for i in range(1, 101)]          # ~5000 chars
-        (self.ws.root / "long.txt").write_text("".join(lines))
+        (self.ws.root / "long.txt").write_bytes("".join(lines).encode())   # bytes: LF on every OS
         got, start = "", 1
         for _ in range(20):
             page = box.call("read_file", {"path": "long.txt", "start_line": start})

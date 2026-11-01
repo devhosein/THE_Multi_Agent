@@ -7,8 +7,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from mission_control import utf8_console  # noqa: E402
 from mission_control.events import check_stream  # noqa: E402
 from mission_control.mock import build_mock_run  # noqa: E402
+
+utf8_console()
 
 args = [a for a in sys.argv[1:] if not a.startswith("--lang=")]
 lang = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--lang=")), "en")

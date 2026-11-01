@@ -11,8 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from mission_control import utf8_console  # noqa: E402
 from mission_control.eventlog import read_events, replay  # noqa: E402
 from mission_control.textview import format_event  # noqa: E402
+
+utf8_console()
 
 ap = argparse.ArgumentParser()
 ap.add_argument("path", nargs="?", default=str(ROOT / "sample" / "mock_run.jsonl"))

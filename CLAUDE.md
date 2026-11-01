@@ -8,7 +8,10 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 - Goal: the **flagship project of the user's résumé** — a multi-agent orchestrator that is genuinely competitive:
   a beautiful, smooth live UI and an engine that shines with strong models and still works with weak local ones.
 - The user tests on **Windows (PowerShell)** with **Ollama** (`ornith-1.5:9b`, `ornith-1.5:35b`). Project folder:
-  `C:\D Drive\Programing\THE_Multi_Agent\v1\mission-control`. Paths contain spaces.
+  `C:\D Drive\Programing\THE_Multi_Agent\main` (git: github.com/devhosein/THE_Multi_Agent). The sibling folders
+  `v1`–`v3` are old hand-made snapshots: never edit them. Paths contain spaces.
+- The user's network: `files.pythonhosted.org` does not resolve (pip downloads fail; `pypi.org` and GitHub work).
+  Installing Python packages needs the user's VPN or a mirror; ask first.
 - What worked well so far: be honest about what is tested and what is not; show evidence (test output, screenshots,
   log excerpts); find root causes before fixing (see `docs/FAILURES.md`); never weaken the code for a weak model —
   add scaffolding instead (strength profiles).
@@ -16,7 +19,7 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 ## Commands
 ```powershell
 python scripts/serve.py                         # the app: http://127.0.0.1:8765 (Live = Ollama, Demo = recorded run)
-python -m unittest discover -s tests -t .       # 246 tests, ~30 s, stdlib only
+python -m unittest discover -s tests -t .       # 249 tests, ~40 s, stdlib only
 node --test tests/ui_state.test.mjs             # UI reducer (Node >= 18)
 python tests/e2e_ui.py                          # real browser, 118 checks: pip install playwright; playwright install chromium
 python scripts/run_engine.py --project C:\tmp\x --prompt "..." [--model ornith-1.5:35b] [--approve-plan] [--strength small]
@@ -61,7 +64,10 @@ engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + to
    (layout bugs here were invisible to DOM assertions). For critical logic, inject a bug on purpose and confirm a
    test fails (this found 4 weak tests so far).
 10. Windows: write files as bytes (no CRLF translation), `EventLog` opens with `newline="\n"`, paths may contain spaces
-    and quotes from "Copy as path" (`paths.clean_path_input`).
+    and quotes from "Copy as path" (`paths.clean_path_input`). Subprocess output: always `encoding="utf-8"`. Scripts
+    call `utf8_console()` (redirected output is cp1252 on Windows). A POST answered before its body is read must drain
+    the body (`Handler._drain`), or Windows resets the connection and the client never sees the answer.
+11. CI (`.github/workflows/ci.yml`) runs the unit and reducer tests on Ubuntu + Windows and e2e on Ubuntu: keep it green.
 
 ## Where things are
 `src/mission_control/`: `engine.py` run orchestration · `orchestrator.py` lead prompts/review/diagnosis/replies ·
@@ -72,8 +78,9 @@ engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + to
 separate process) · `textview.py` · `ui/` (`index.html`, `app.js`, `state.js`, `i18n.js`, `app.css`).
 `tests/helpers.py` has `ScriptedLLM` / `OllamaStandIn`: a scripted model to test the engine without Ollama.
 
-## Current status (end of the chat phase)
+## Current status
 Phases 0–2 done plus the post-live-test hardening (approval, rescue, decisions, logs/report, strength, replies,
-continuation, i18n, native picker). **Not yet run on the user's Windows machine**: this whole last batch, and the
-native folder dialog. First thing to do in Claude Code: run the tests on Windows, then a Live run with each model,
-and read the report. Next phases and open items: `docs/HANDOFF.md` §8–§9.
+continuation, i18n, native picker). **Unit and reducer tests pass on the user's Windows machine** (2026-11-01, after
+fixing 4 Windows-only problems). **Still not verified on Windows**: e2e (Playwright could not be installed, see the
+network note), a Live run with each model, and the native folder dialog. Next: Live run + report, then
+`docs/HANDOFF.md` §9 (real verification first).

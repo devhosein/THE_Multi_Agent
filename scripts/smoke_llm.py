@@ -20,11 +20,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from mission_control import utf8_console  # noqa: E402
 from mission_control.llm import (  # noqa: E402
     DEFAULT_MODEL, LLMError, OllamaClient, StructuredOutputError, extract_json,
 )
 from mission_control.plan import plan_stages  # noqa: E402
 from mission_control.planner import make_plan  # noqa: E402
+
+utf8_console()
 
 PLAN_PROMPTS = [
     "یه سایت معرفی کافه بساز: منوی محصولات، فرم رزرو میز و یه بک‌اند ساده.",

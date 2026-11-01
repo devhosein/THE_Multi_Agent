@@ -84,7 +84,7 @@ class Js(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_syntax(self):
         for name in ("app.js", "state.js"):
-            r = subprocess.run(["node", "--check", str(UI / name)], capture_output=True, text=True)
+            r = subprocess.run(["node", "--check", str(UI / name)], capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(r.returncode, 0, r.stderr)
 
 
@@ -104,7 +104,7 @@ class Html(unittest.TestCase):
 
 def _node_json(expr):
     r = subprocess.run(["node", "-e", f"const I = require({json.dumps(str(UI / 'i18n.js'))}); console.log(JSON.stringify({expr}))"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 

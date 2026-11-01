@@ -53,6 +53,7 @@ PICKER_TITLES = {"en": "Select the project folder", "fa": "پوشه‌ی پرو�
 LANGS = ("en", "fa")
 MAX_JSON_BYTES = 1_000_000
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+DRAIN_LIMIT = 4 * 1024 * 1024       # the most of an unread (refused) request body we read just to answer cleanly
 HEARTBEAT_SECONDS = 15
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 BATCH_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -162,6 +163,25 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         return origin is None or urlparse(origin).netloc == self.headers.get("Host")
 
+    def _body_size(self) -> int:
+        try:
+            return max(0, int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            return 0
+
+    def _drain(self) -> None:
+        """Read what is left of a request body we answered without reading. Closing a socket with unread data makes
+        Windows reset the connection, and the client then gets an abort instead of our (error) answer."""
+        left = self._unread
+        if left > DRAIN_LIMIT:
+            return              # not worth reading; this client may see a reset
+        self._unread = 0
+        while left > 0:
+            chunk = self.rfile.read(min(65536, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+
     def _read_json(self) -> dict[str, Any]:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -169,6 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             raise SessionError("Invalid Content-Length header") from None
         if n > MAX_JSON_BYTES:
             raise SessionError("The request is too large", 413, "too_large")
+        self._unread = 0
         try:
             data = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
@@ -265,6 +286,13 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------- POST
     def do_POST(self) -> None:
+        self._unread = self._body_size()
+        try:
+            self._post()
+        finally:
+            self._drain()
+
+    def _post(self) -> None:
         if not self._host_ok():
             return self._error("Invalid Host header", 403, "bad_host")
         if not self._origin_ok():
@@ -333,6 +361,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 f.write(chunk)
                 remaining -= len(chunk)
+        self._unread = 0
         self._send_json({"name": name, "size": size - remaining})
 
     def _models(self, host: str | None) -> None:

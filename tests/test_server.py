@@ -1,5 +1,7 @@
 import http.client
 import json
+import os
+import sys
 import tempfile
 import threading
 import time
@@ -314,6 +316,16 @@ class NativePicker(ServerCase):
         first.join(5)
         self.assertEqual(self.req("POST", "/api/pick-folder", {})[0], 200)       # the lock was released
 
+    def test_a_refused_request_still_gets_its_answer(self):
+        """A request refused before its body is read must still receive the 403. Closing a socket with unread data
+        makes Windows reset the connection, and the client then sees an abort instead of the answer."""
+        for headers in [{"Origin": "http://evil.example"}, {"Host": "evil.example"}] * 4:   # a race: try it a few times
+            s, body = self.req("POST", "/api/pick-folder", raw=b"x" * 900_000,
+                               headers={**headers, "Content-Type": "application/json"})
+            self.assertEqual(s, 403)
+            self.assertIn(body["code"], ("bad_origin", "bad_host"))
+        self.assertEqual(self.calls, [])
+
     def test_a_foreign_web_page_cannot_open_dialogs_on_your_desktop(self):
         s, _ = self.req("POST", "/api/pick-folder", {}, headers={"Origin": "http://evil.example"})
         self.assertEqual(s, 403)
@@ -321,6 +333,8 @@ class NativePicker(ServerCase):
         self.assertEqual(s, 403)
         self.assertEqual(self.calls, [])
 
+    @unittest.skipIf(sys.platform in ("win32", "darwin") or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"),
+                     "a desktop is available: the real dialog would open on the screen and wait for someone")
     def test_the_real_picker_fails_politely_without_a_display(self):
         """No mocking: the genuine child process, on a machine with no tkinter/display, reports an error."""
         from mission_control.server import native_pick_folder

@@ -1,5 +1,10 @@
 # Mission Control
 
+[![CI](https://github.com/devhosein/THE_Multi_Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/devhosein/THE_Multi_Agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)
+
 A multi-agent orchestrator with a live, graphical **operations room**. You describe a project; a *lead agent* breaks it
 into a validated plan and creates one specialist agent per task. You review the team (and pick a model per agent),
 then watch the work happen: tasks run in dependency order, every result is checked, failures are diagnosed and rescued
@@ -53,11 +58,12 @@ prompt ─► plan (validated DAG) ─► one agent per task ─► your go-ahea
 
 | command | covers | count |
 |---|---|---|
-| `python -m unittest discover -s tests -t .` | engine (scripted model), engine over the real Ollama HTTP protocol, tools sandbox, server, SSE, security, paths, report, translations, repo hygiene | 246 |
+| `python -m unittest discover -s tests -t .` | engine (scripted model), engine over the real Ollama HTTP protocol, tools sandbox, server, SSE, security, paths, report, translations, scripts, repo hygiene | 249 |
 | `node --test tests/ui_state.test.mjs` | the UI's event reducer | 16 |
 | `python tests/e2e_ui.py` | real browser (`pip install playwright && playwright install chromium`): layouts in both languages, live run, approval, replan, failure decision, logs, report, retry | 118 checks |
 
-Critical logic is mutation-tested (bugs injected on purpose must make a test fail).
+Critical logic is mutation-tested (bugs injected on purpose must make a test fail). CI runs the unit and reducer
+tests on Ubuntu and Windows (Python 3.11 and 3.13) and the browser checks on Ubuntu, on every push.
 
 ## Documentation
 - `CLAUDE.md` — working notes for continuing in Claude Code (commands, architecture, rules).

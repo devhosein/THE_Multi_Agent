@@ -14,11 +14,11 @@ what is not, and what to build next. Written to continue the work in Claude Code
   user), revises the plan mid-run, and answers the user's messages at any moment. All of it is visible live in a
   graphical "operations room".
 - **Stack**: Python ≥ 3.11 **stdlib only** (server, engine) + vanilla JS/CSS UI (no build step) + Ollama.
-  Tests: unittest (246), Node reducer tests (16), Playwright e2e (118 checks).
+  Tests: unittest (249), Node reducer tests (16), Playwright e2e (118 checks); CI on Ubuntu + Windows.
 - **State**: roadmap phases 0, 1, 2 done; parts of 3, 4, 6, 7 done; phase 5 (parallel execution) and real verification
   (tests run by the engine, reviewer agent) are the big open items. The latest batch (approval, rescue, decisions,
-  logs/report, strength profiles, immediate replies, continuation) **has not yet been run on the user's Windows
-  machine** — do that first.
+  logs/report, strength profiles, immediate replies, continuation) passes the unit tests on the user's Windows machine,
+  but **has not had a Live run there yet** — do that first.
 
 ## 2. Vision and what makes it competitive
 
@@ -167,7 +167,7 @@ decisions. Rendering rules in `CLAUDE.md` §Rules 5–8.
 
 | Suite | Command | Count | Notes |
 |---|---|---|---|
-| Python | `python -m unittest discover -s tests -t .` | 246 | engine via `ScriptedLLM`, engine over the real Ollama HTTP protocol (`FakeOllama`), server on a real socket, SSE, security, paths, report, i18n/asset checks, repo hygiene |
+| Python | `python -m unittest discover -s tests -t .` | 249 | engine via `ScriptedLLM`, engine over the real Ollama HTTP protocol (`FakeOllama`), server on a real socket, SSE, security, paths, report, i18n/asset checks, repo hygiene |
 | Node | `node --test tests/ui_state.test.mjs` | 16 | reducer on the recorded demo run |
 | Browser | `python tests/e2e_ui.py` | 118 | layout 1–8 agents × 4 window sizes × 2 languages, live run, approval, replan, failure decision, logs, report, retry, language switch, RTL |
 
@@ -176,8 +176,10 @@ survivor became a new test), looking at screenshots for every UI change, and che
 the first run actually measures anything.
 
 ## 7. Known limits and unverified parts
-- **Not yet run on Windows**: the whole latest batch; the native folder dialog (needs tkinter, which the python.org
-  installer includes by default).
+- **On Windows** (2026-11-01): unit + reducer tests pass after fixing 4 Windows-only problems (CRLF in a test, a
+  cp1252 subprocess decode, symlinks needing admin rights — now also tested with junctions — and a connection reset
+  when the server refused a POST without reading its body). Not yet run there: e2e, a Live run, the native folder
+  dialog (tkinter is present).
 - Execution is sequential; "verified" means mechanical checks only (files exist, non-empty, .py/.json/.html/.css parse).
 - Agents cannot run code. Integration problems across tasks (e.g. a stylesheet not linked from a file another task
   owns) depend on the agent calling `note_to_lead` and the lead's review acting on it.
@@ -188,7 +190,8 @@ the first run actually measures anything.
 - Single session per server, no authentication (localhost only by design). Web fonts load from Google Fonts when online.
 
 ## 8. First steps in Claude Code
-1. Unzip over (or next to) the existing folder, run the three test suites on Windows; fix anything platform-specific.
+1. ~~Run the three test suites on Windows; fix anything platform-specific.~~ Unit + reducer done; e2e waits for
+   Playwright (pip cannot reach files.pythonhosted.org on the user's network).
 2. `python scripts/serve.py` → Live run with `ornith-1.5:9b` and with `ornith-1.5:35b`, approval on, then try: change a
    model during approval, message an agent while it works, force a failure (ask for something impossible), use the
    decision panel, open Logs, **Download report**.

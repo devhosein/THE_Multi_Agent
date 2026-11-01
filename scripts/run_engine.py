@@ -14,12 +14,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from mission_control import utf8_console  # noqa: E402
 from mission_control.engine import EngineConfig, EngineSession  # noqa: E402
 from mission_control.events import T  # noqa: E402
 from mission_control.llm import DEFAULT_MODEL, LLMError, OllamaClient  # noqa: E402
 from mission_control.paths import clean_path_input  # noqa: E402
 from mission_control.textview import format_event  # noqa: E402
 from mission_control.workspace import init_workspace  # noqa: E402
+
+utf8_console()
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--project", required=True, help="project folder (created if missing)")

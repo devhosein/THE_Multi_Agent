@@ -18,9 +18,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
+from mission_control import utf8_console  # noqa: E402
 from mission_control.server import make_server  # noqa: E402
 from tests.helpers import APP_PY, FINISH, T, T1, T2, OllamaStandIn, call, happy_workers  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
+
+utf8_console()
 
 HOLDER = {"llm": OllamaStandIn(installed=("ornith-1.5:9b",), on_worker=lambda tid, msgs: time.sleep(0.25))}
 PICKER = {"answer": {"status": "error", "message": "tkinter is not available"}}

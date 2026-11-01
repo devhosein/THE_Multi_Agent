@@ -33,9 +33,22 @@ class PathJail(unittest.TestCase):
     def test_symlink_escape_is_blocked(self):
         outside = Path(self.tmp.name) / "outside"
         outside.mkdir()
-        os.symlink(outside, self.root / "link")
+        try:
+            os.symlink(outside, self.root / "link")
+        except OSError:
+            self.skipTest("creating symlinks needs extra rights here (Windows without Developer Mode)")
         with self.assertRaises(PathEscapeError):
             resolve_inside(self.root, "link/secret.txt")
+
+    @unittest.skipUnless(os.name == "nt", "directory junctions exist only on Windows")
+    def test_junction_escape_is_blocked(self):
+        """The Windows way out of a folder: a junction needs no special rights, so any program can create one."""
+        import _winapi
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        _winapi.CreateJunction(str(outside), str(self.root / "door"))
+        with self.assertRaises(PathEscapeError):
+            resolve_inside(self.root, "door/secret.txt")
 
     def test_mission_dir_is_protected(self):
         with self.assertRaises(PathEscapeError):
