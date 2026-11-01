@@ -10,6 +10,7 @@ Covers: layout for 1-8 agents in both languages and several window sizes, live-r
 visible, ticks drawn, clicks survive streaming, nothing slides sideways), chat, pause, stop, reload, a full
 live engine run, language switching, text direction of mixed Persian/English text, folder picking."""
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -40,6 +41,8 @@ problems = []
 def check(cond, msg):
     if not cond:
         problems.append(msg)
+        if os.environ.get("GITHUB_ACTIONS"):   # an annotation: readable on the run page without signing in
+            print("::error title=e2e::" + msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
     print(("PASS " if cond else "FAIL ") + msg)
 
 
