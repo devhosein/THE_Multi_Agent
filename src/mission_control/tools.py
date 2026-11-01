@@ -52,6 +52,12 @@ TOOL_SPECS: list[dict[str, Any]] = [
                        "The lead answers within a step or two and can change the plan.",
         "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}},
     {"type": "function", "function": {
+        "name": "check_project",
+        "description": "Ask the engine to run the project the way a browser would: start the server, load every page "
+                       "with its scripts, styles and images, call the API the pages call. Returns the problems found. "
+                       "Use it after changing a server or pages, and before finish. You cannot run anything else.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
         "name": "finish",
         "description": "Call this when every acceptance criterion is met. Give a short summary of what you built.",
         "parameters": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}}},
@@ -62,7 +68,8 @@ class ToolBox:
     """One instance per task; remembers what the task wrote so the checks and the lead can use it."""
 
     def __init__(self, ws: Workspace, owns: Iterable[str], log: EventLog, agent_id: str,
-                 *, chunk_delay_cap: float = 0.02, emit=None, read_chars: int = MAX_READ_BYTES, on_note=None) -> None:
+                 *, chunk_delay_cap: float = 0.02, emit=None, read_chars: int = MAX_READ_BYTES, on_note=None,
+                 run_check=None) -> None:
         self.ws = ws
         self.owns = tuple(owns)
         self.log = log
@@ -71,6 +78,7 @@ class ToolBox:
         self._emit = emit or (lambda type_, data: log.append(type_, data, agent_id=agent_id))
         self.read_chars = read_chars
         self.on_note = on_note           # the engine's live channel to the lead (None: notes wait for the review)
+        self.run_check = run_check       # the engine's integration check (None: not available here)
         self.written: list[str] = []
         self.notes: list[str] = []
         self.finished: str | None = None
@@ -81,9 +89,11 @@ class ToolBox:
         if not isinstance(args, dict):
             return "ERROR: tool arguments must be a JSON object"
         fn = {"list_files": self._list_files, "read_file": self._read_file, "write_file": self._write_file,
-              "append_file": self._append_file, "note_to_lead": self._note, "finish": self._finish}.get(name)
+              "append_file": self._append_file, "note_to_lead": self._note, "check_project": self._check_project,
+              "finish": self._finish}.get(name)
         if fn is None:
-            return f"ERROR: unknown tool {name!r}. Available: list_files, read_file, write_file, append_file, note_to_lead, finish"
+            return (f"ERROR: unknown tool {name!r}. Available: list_files, read_file, write_file, append_file, "
+                    "note_to_lead, check_project, finish")
         try:
             return fn(args)
         except OSError as e:
@@ -250,6 +260,11 @@ class ToolBox:
             return "OK: the lead agent has your report and will answer shortly. Continue with your own files meanwhile."
         self.notes.append(text)
         return "OK: the lead agent will read your note after this task"
+
+    def _check_project(self, args: dict[str, Any]) -> str:
+        if self.run_check is None:
+            return "ERROR: the project check is not available here"
+        return "Result of running the project:\n" + self.run_check()
 
     def _finish(self, args: dict[str, Any]) -> str:
         summary = args.get("summary")

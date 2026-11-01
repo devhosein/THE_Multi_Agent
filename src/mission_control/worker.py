@@ -237,7 +237,8 @@ def run_worker(
             messages.append({"role": "tool", "tool_name": name, "content": result})
             if toolbox.finished is not None:
                 return WorkerResult(True, summary=toolbox.finished, steps=step)
-            sig = _signature(name, args)
+            # re-checking the project after each change is normal; the same RESULT again and again is the loop
+            sig = _signature(name, {"result": result} if name == "check_project" else args)
             seen[sig] = seen.get(sig, 0) + 1
             if seen[sig] >= lim.loop_stop:
                 return WorkerResult(False, kind="loop", steps=step,

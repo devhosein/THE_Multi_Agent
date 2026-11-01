@@ -52,7 +52,8 @@ WORKER_EXAMPLE = """Example of a good sequence of calls (adapt it to your task):
 3. write_file {"path": "backend/server.js", "content": "<the first ~150 lines>"}
 4. append_file {"path": "backend/server.js", "content": "<the next part>"}
 5. write_file {"path": "backend/package.json", "content": "<complete file>"}
-6. finish {"summary": "Built the server with the two endpoints from the contract."}"""
+6. check_project {}
+7. finish {"summary": "Built the server with the two endpoints from the contract."}"""
 
 
 def build_worker_system(task: Task, plan: Plan, ws: Workspace, decisions: str, profile: Profile | None = None) -> str:
@@ -72,15 +73,17 @@ Acceptance criteria (all must be true when you finish):
 {chr(10).join('- ' + a for a in task.acceptance)}
 
 You may create or modify files ONLY inside these paths: {owns}
-Tools: list_files, read_file, write_file, append_file, note_to_lead, finish.
+Tools: list_files, read_file, write_file, append_file, note_to_lead, check_project, finish.
 
 Rules:
 1. Look at what already exists before you start, and follow the shared contracts exactly.
 2. Write COMPLETE, working files. No placeholders, no "TODO", no "...".
 3. Long files: write_file the first part (about 150 lines), then append_file the rest in parts. Keep every call short enough.
 4. You cannot run programs, tests or shell commands here, so do not try and do not write scripts just to run things.
-   Your files are checked automatically after you finish, including an integration check that starts the project's
-   server, loads every page with its scripts/styles/images and calls the API the way a browser does.
+   But you CAN call check_project: the engine then starts the project's server, loads every page with its
+   scripts/styles/images and calls the API the way a browser does, and tells you what is broken. Use it after you
+   change a server or pages and before finish: reading code is not proof that it works. The same check runs
+   automatically after you finish.
 5. When a tool returns ERROR, read why and change your approach. Never repeat a call that failed or changed nothing.
 6. If your work needs a change in a file you do not own (for example linking your stylesheet from index.html, or the
    backend must serve your pages / allow your requests), call note_to_lead AT ONCE with the exact change, like telling
@@ -136,12 +139,16 @@ Hard rules for an update:
 6. Act on worker notes. If a note asks for a change in a file that another task owns and that task is already done,
    add a small pending follow-up task that owns exactly that file and depends on the tasks it needs.
 7. "decisions" lists any new shared decisions every agent must follow (short sentences); otherwise [].
-8. Write reason, titles and goals in the same language as the original request."""
+8. Write reason, titles and goals in the same language as the original request.
+9. "Integration check" below is EVIDENCE: the engine really started the project and loaded it like a browser. A
+   result_summary is only an agent's CLAIM. When they disagree, the evidence wins: never call a fix done or a task
+   redundant while the integration check still reports the problem."""
 
 
 def build_review_user(
     prompt: str, plan: Plan, statuses: Mapping[str, str], results: Mapping[str, str], written: Mapping[str, Sequence[str]],
     decisions: str, notes: Sequence[tuple[str, str]], user_messages: Sequence[str], ws: Workspace,
+    evidence: str = "",
 ) -> str:
     tasks = []
     for t in plan.tasks:
@@ -160,6 +167,8 @@ def build_review_user(
         sections.append("Notes from workers:\n" + "\n".join(f"- [{tid}] {text}" for tid, text in notes))
     if user_messages:
         sections.append("Messages from the user (treat them as instructions):\n" + "\n".join(f"- {m}" for m in user_messages))
+    if evidence:
+        sections.append("Integration check (the engine ran the project just now; evidence, not a claim):\n" + evidence)
     return "\n\n".join(sections)
 
 
@@ -176,7 +185,8 @@ class ReviewResult:
 
 def review_plan(llm: LLMClient, prompt: str, plan: Plan, statuses: Mapping[str, str], results: Mapping[str, str],
                 written: Mapping[str, Sequence[str]], decisions: str, notes: Sequence[tuple[str, str]],
-                user_messages: Sequence[str], ws: Workspace, *, retries: int = 2) -> ReviewResult:
+                user_messages: Sequence[str], ws: Workspace, *, retries: int = 2, evidence: str = "",
+                protected: Mapping[str, str] | None = None) -> ReviewResult:
     def validate(obj: Any) -> list[str]:
         if not isinstance(obj, dict):
             return ["top-level JSON must be an object"]
@@ -188,10 +198,11 @@ def review_plan(llm: LLMClient, prompt: str, plan: Plan, statuses: Mapping[str, 
             new = Plan.from_dict({"version": plan.version + 1, "tasks": obj.get("tasks")})
         except PlanError as e:
             return [str(e)]
-        return validate_replan(plan, new, statuses)
+        return validate_replan(plan, new, statuses, protected=protected)
 
     messages = [{"role": "system", "content": REVIEW_SYSTEM},
-                {"role": "user", "content": build_review_user(prompt, plan, statuses, results, written, decisions, notes, user_messages, ws)}]
+                {"role": "user", "content": build_review_user(prompt, plan, statuses, results, written, decisions, notes,
+                                                              user_messages, ws, evidence)}]
     try:
         res = generate_structured(llm, messages, schema=replan_json_schema(), validate=validate, retries=retries)
     except StructuredOutputError as e:

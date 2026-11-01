@@ -195,6 +195,8 @@ class EngineSession:
         self._fixes = 0
         self._final_reviews = 0
         self._integration_left: list[Problem] = []
+        self._fix_for: dict[str, list[Problem]] = {}    # fix task -> the problems it must make disappear
+        self._evidence = ""                              # the latest integration check, for the lead's reviews
         self._running_agent: str | None = None
         self._awaiting_approval = False
         self._approved: dict[str, str] | None = None
@@ -486,14 +488,23 @@ class EngineSession:
     def _integration(self, task: Task | None) -> tuple[list[Problem], list[Problem]]:
         """Run the project. Problems inside `task`'s own files go back to its agent; the rest are between agents."""
         report = check_integration(self.ws.root)
+        self._evidence = report.as_text() if report.ran else ""
         detail = "\n".join(f"- [{p.kind}] {p.message} (files: {', '.join(p.files)})" for p in report.problems)
         self._log("info" if not report.problems else "warn", "integration", report.summary(),
                   "\n".join(filter(None, [detail, *report.notes])) or None, task_id=task.id if task else None)
         own, cross = [], []
+        targets = self._fix_for.get(task.id, []) if task is not None else []
         for prob in report.problems:
             owners = {o for f in prob.files if f for o in self._owners(f)}
-            (own if task is not None and owners <= {task.id} else cross).append(prob)
+            still = any(t.kind == prob.kind and set(t.files) & set(prob.files) for t in targets)
+            (own if task is not None and (owners <= {task.id} or still) else cross).append(prob)
         return own, cross
+
+    def _check_for_agent(self) -> str:
+        """check_project: an agent asks the engine to run the project (it cannot run anything itself)."""
+        report = check_integration(self.ws.root)
+        self._log("info", "integration", "An agent ran the project check: " + report.summary())
+        return report.as_text()
 
     def _add_fix_task(self, problems: list[Problem], after: str | None) -> bool:
         """A task owning exactly the files involved, right after `after`, so the next agent fixes the seam."""
@@ -535,6 +546,7 @@ class EngineSession:
             self._lead_instructions.append("The integration check found problems between agents:\n" + listing)
             return False
         self._line("integration_cross", n=len(problems))
+        self._fix_for[fix.id] = list(problems)
         self._apply_update(new, "Integration check: " + ", ".join(sorted({p.kind for p in problems})))
         return True
 
@@ -793,7 +805,8 @@ class EngineSession:
             self._set_agent(aid, "running")
             box = ToolBox(self.ws, task.owns, self.log, aid, chunk_delay_cap=self.cfg.chunk_delay_cap,
                           emit=lambda type_, data, _a=aid: self._emit(type_, data, agent_id=_a), read_chars=prof.read_chars,
-                          on_note=lambda text, _t=task, _a=aid: self._report(_t, _a, text))
+                          on_note=lambda text, _t=task, _a=aid: self._report(_t, _a, text),
+                          run_check=self._check_for_agent if self.cfg.integration else None)
             box.written = list(self._written.get(task.id, []))      # files from earlier attempts still count
             system = build_worker_system(task, self._plan, self.ws, self._decisions_text(), prof)
             user = build_worker_user(feedback, box.written, self._pending_for_agent.pop(aid, []), guidance)
@@ -891,8 +904,11 @@ class EngineSession:
         notes, self._notes = self._notes, []
         self._checkpoint()
         self._line("reviewing")
+        protected = {tid: "the integration check added it and must see its problems gone first"
+                     for tid in self._fix_for if self._status.get(tid) == "pending"}
         res = review_plan(self.llm, self.prompt, self._plan, self._status, self._results, self._written,
-                          self._decisions_text(), notes, msgs, self.ws, retries=self.cfg.review_retries)
+                          self._decisions_text(), notes, msgs, self.ws, retries=self.cfg.review_retries,
+                          evidence=self._evidence, protected=protected)
         self._usage(res.tokens_in, res.tokens_out)
         if res.error:
             self._line("review_failed")

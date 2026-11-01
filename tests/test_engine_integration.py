@@ -80,6 +80,48 @@ class EngineIntegration(unittest.TestCase):
         self.assertIn("2 integration problem(s) remain", fin.data["summary"])
         assert_valid(self, evs)
 
+    def test_a_fix_that_is_only_claimed_is_not_accepted(self):
+        """Real run cafe-35b-v2: the fix agent said "fixed", the lead believed it, the server still 404'd every page."""
+        llm = ScriptedLLM(plan=PLAN, workers={
+            "t1": [backend(pages=False), FINISH],
+            "t2": [*frontend(base=""), FINISH],
+            "fix1": [backend(pages=False), call("finish", summary="The backend now serves the pages."),
+                     backend(pages=False), call("finish", summary="Fixed for real this time."),
+                     backend(pages=False), call("finish", summary="Definitely fixed.")]})
+        s, evs = run_engine(llm, review=False, integration=True, integration_fixes=1, max_attempts=1, recoveries=0)
+        self.assertNotEqual(s._status["fix1"], "verified", "a claim is not a fix")
+        failed = [e.data["message"] for e in evs if e.type == EV.LOG and e.data["source"] == "task" and "fix1" in e.data["message"]]
+        self.assertTrue(failed and "relative" in failed[0], failed)
+        self.assertEqual([e.data["status"] for e in evs if e.type == EV.RUN_FINISHED], ["failed"])
+
+    def test_the_lead_may_not_delete_a_fix_task_while_its_problem_remains_and_sees_the_evidence(self):
+        llm = ScriptedLLM(plan=PLAN, workers={
+            "t1": [backend(pages=False), FINISH],
+            "t2": [*frontend(base=""), FINISH],
+            "fix1": [backend(pages=True), FINISH]},
+            reviews=[{"action": "keep", "reason": "fine", "tasks": []},
+                     {"action": "update", "reason": "fix1 is redundant", "tasks": PLAN["tasks"]},   # tries to drop fix1
+                     {"action": "keep", "reason": "ok", "tasks": []}])
+        s, evs = run_engine(llm, review=True, integration=True)
+        self.assertEqual(s._status.get("fix1"), "verified")
+        rejected = [c for c in llm.kinds("review") if "may not be removed or changed" in c[2][-1]["content"]]
+        self.assertTrue(rejected, "the attempt to drop the fix task must be refused and the reason fed back")
+        with_evidence = [c[2][1]["content"] for c in llm.kinds("review")
+                         if "Integration check (the engine ran the project" in c[2][1]["content"] and "[relative_api]" in c[2][1]["content"]]
+        self.assertTrue(with_evidence, "the review after the problem appeared must carry it as evidence")
+        self.assertIn("the server answered: GET / -> 404", with_evidence[0])
+
+    def test_agents_can_run_the_project_check_themselves(self):
+        llm = ScriptedLLM(plan=PLAN, workers={
+            "t1": [backend(pages=True), call("check_project"), FINISH],
+            "t2": [*frontend(base=""), call("check_project"), FINISH]})
+        s, evs = run_engine(llm, review=False, integration=True)
+        results = [m["content"] for _, tid, msgs in llm.kinds("worker", "t2") for m in msgs
+                   if m.get("role") == "tool" and m.get("tool_name") == "check_project"]
+        self.assertTrue(results)
+        self.assertIn("Result of running the project", results[0])
+        self.assertIn("everything fits together", results[0])
+
     def test_it_can_be_switched_off(self):
         llm = ScriptedLLM(plan=PLAN, workers={"t1": [backend(pages=False), FINISH],
                                               "t2": [*frontend(base="http://localhost:8000"), FINISH]})

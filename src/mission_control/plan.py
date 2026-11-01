@@ -356,15 +356,22 @@ def path_allowed(path: str, owns: Iterable[str]) -> bool:
 FROZEN_STATUSES = frozenset({"running", "done", "verified", "failed"})
 
 
-def validate_replan(old: Plan, new: Plan, statuses: Mapping[str, str], replaceable: Iterable[str] = ()) -> list[str]:
+def validate_replan(old: Plan, new: Plan, statuses: Mapping[str, str], replaceable: Iterable[str] = (),
+                    protected: Mapping[str, str] | None = None) -> list[str]:
     """Rules for the lead agent editing the plan WHILE it runs.
 
     * the new plan must itself be a valid plan
     * a task that is running / done / verified / failed is history: it may not be removed or changed
-    * pending (and skipped) tasks may be added, removed or edited freely
+    * pending (and skipped) tasks may be added, removed or edited freely, except `protected` ones
+      ({task id: why}): fix tasks the integration check added for problems it still sees (a real run: the lead
+      deleted them as "redundant" because an agent CLAIMED the fix, while the running project said otherwise)
     """
     errors = validate_plan(new)
     new_by_id = new.by_id()
+    old_by_id = old.by_id()
+    for tid, why in (protected or {}).items():
+        if tid in old_by_id and (tid not in new_by_id or new_by_id[tid] != old_by_id[tid]):
+            errors.append(f"task {tid!r} may not be removed or changed: {why}. Return it exactly as it was")
     swap = set(replaceable)          # a failed task the lead is replacing with smaller ones may go
     for t in old.tasks:
         st = statuses.get(t.id, "pending")

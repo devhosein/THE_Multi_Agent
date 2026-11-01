@@ -95,7 +95,7 @@ class OverHttp(unittest.TestCase):
         self.assertEqual(planner[0]["options"]["num_ctx"], 4096)
         self.assertFalse(planner[0]["stream"])
         names = {t["function"]["name"] for t in workers[0]["tools"]}
-        self.assertEqual(names, {"list_files", "read_file", "write_file", "append_file", "note_to_lead", "finish"})
+        self.assertEqual(names, {"list_files", "read_file", "write_file", "append_file", "note_to_lead", "check_project", "finish"})
         # the second worker request carries the first tool result back to the model
         second = [p for p in workers if len(p["messages"]) > 2][0]["messages"]
         self.assertEqual(second[-2]["role"], "assistant")

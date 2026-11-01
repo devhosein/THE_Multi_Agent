@@ -57,6 +57,12 @@ class Report:
     problems: list[Problem] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
+    def as_text(self) -> str:
+        """For a model: the summary and every problem with the files involved."""
+        lines = [self.summary()] + [f"- [{p.kind}] {p.message} (files: {', '.join(f for f in p.files if f)})"
+                                    for p in self.problems]
+        return "\n".join(lines + [f"note: {n}" for n in self.notes])
+
     def summary(self) -> str:
         if not self.ran:
             return "integration check: nothing to run (" + ("; ".join(self.notes) or "no pages and no server") + ")"
@@ -330,16 +336,21 @@ def _check(root: Path, report: Report, started: dict) -> None:
 
     # where the pages come from: the backend (same origin as its API) or the files themselves
     page_url: dict[str, str] = {}
+    tried: list[str] = []                     # evidence for the fixer: what the server answered for the pages
     if port:
         for rel in parsed:
             for cand in ("/" + rel, "/" + "/".join(rel.split("/")[1:])) if "/" in rel else ("/" + rel,):
                 st, hd, _ = _request(port, "GET", cand)
+                if len(tried) < 6:
+                    tried.append(f"GET {cand} -> {st or 'no answer'}")
                 if st == 200 and "html" in hd.get("content-type", "html"):
                     page_url[rel] = cand
                     break
         st, hd, _ = _request(port, "GET", "/")
+        tried.insert(0, f"GET / -> {st or 'no answer'}")
         if st == 200 and "html" in hd.get("content-type", "") and not page_url:
             page_url = {rel: "/" + rel for rel in parsed}
+    evidence = f" (the server answered: {', '.join(tried[:5])})" if tried and not page_url else ""
     report.served_by = "backend" if page_url else "files" if parsed else ""
     if port and parsed and page_url and len(page_url) < len(parsed):
         for rel in parsed:
@@ -431,7 +442,9 @@ def _check(root: Path, report: Report, started: dict) -> None:
                 if not page_url:
                     report.problems.append(Problem(
                         "relative_api", f"{owner} calls the relative URL {c.path}, but the backend does not serve the "
-                        "pages, so in a browser the request goes to whatever serves the HTML, not to the API. Fix: "
+                        f"pages{evidence}, so in a browser the request goes to whatever serves the HTML, not to the API. "
+                        "If the server has code to serve the pages, it does not work: check how it maps a URL path like "
+                        "/index.html to a file (a leading '/' makes os.path.join drop the folder). Fix: "
                         "let the backend serve the pages too (same origin, recommended), or call the API's full address "
                         "and add CORS.", files))
                 continue
@@ -452,7 +465,7 @@ def _check(root: Path, report: Report, started: dict) -> None:
             allow = hd.get("access-control-allow-origin", "")
             if allow not in ("*", origin) or (c.method != "GET" and not (200 <= st < 300)):
                 where = "the pages are served by the backend on another host/port spelling" if page_url else \
-                    "the pages are not served by the backend"
+                    f"the pages are not served by the backend{evidence}"
                 report.problems.append(Problem(
                     "cross_origin", f"{owner} calls {c.origin}{c.path} ({c.method}) from another origin ({where}), "
                     f"and the server does not allow it (CORS{' preflight' if c.method != 'GET' else ''}: "
