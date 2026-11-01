@@ -1,0 +1,44 @@
+{
+ "project": "C:\\D Drive\\Programing\\THE_Multi_Agent\\live-runs\\cafe-35b",
+ "points": {
+  "F1": 10,
+  "F2": 10,
+  "F3": 10,
+  "F4": 0,
+  "F5": 0,
+  "Q1": 5,
+  "F7": 0,
+  "F6": 5,
+  "Q2": 0,
+  "Q3": 0,
+  "Q4": null
+ },
+ "notes": {
+  "backend": "backend\\server.py",
+  "F1": "listening: True, non-stdlib imports: none",
+  "F2": "GET /api/menu -> 200, 10 items with name+price",
+  "served_by": "static file server",
+  "F3": "story: True, opening hours: True",
+  "F4": "0/10 menu items visible on /menu.html",
+  "F5": "form fields filled: 7, stored in a JSON file: False, confirmation shown: False",
+  "Q1": "extra width at 375px: {'landing': 0, 'menu': 0, 'reserve': 0}",
+  "F7": [
+   "console: Access to fetch at 'http://localhost:8000/api/menu' from origin 'http://127.0.0.1:8001' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Con",
+   "console: Failed to load resource: net::ERR_FAILED",
+   "failed: http://localhost:8000/api/menu",
+   "pageerror: Cannot set properties of null (setting 'className')",
+   "pageerror: Cannot set properties of null (setting 'hidden')"
+  ],
+  "F6": "POST /api/reservations with {} -> 400",
+  "Q2": {
+   "tests\\test_integration.py": 1
+  },
+  "Q3": "no run command found",
+  "Q4": "design: reviewer score 0-15 from the screenshots"
+ },
+ "size": {
+  "files": 12,
+  "lines": 2356
+ },
+ "automatic_total": 40
+}

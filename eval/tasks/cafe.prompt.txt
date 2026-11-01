@@ -1,0 +1,3 @@
+Build a small cafe website. A landing page with the cafe's story and opening hours, a menu page that loads the menu from a small JSON API, and a table-reservation form that sends reservations to the API. Backend: Python standard library only (http.server), storing reservations in a JSON file. Frontend: plain HTML, CSS and JavaScript, responsive, warm and modern design.
+
+Use a warm color palette: coffee brown, cream and a soft orange accent. Keep all page text in English.
