@@ -319,6 +319,29 @@ class Replanning(unittest.TestCase):
         review = next(c for c in llm.kinds("review") if "the frontend must call /api/menu" in c[2][-1]["content"])
         self.assertIn("Report from the backend agent working on t2", review[2][-1]["content"])
 
+    def test_an_agent_waits_for_the_fix_its_report_caused_then_continues(self):
+        """Live run cafe-35b-v3: QA reported a bug in a frontend file, the lead added a fix task, but tasks run one after
+        another, so the fix waited for QA and QA kept reporting "still not fixed". Now QA steps aside until the fix is done."""
+        w = happy_workers()
+        w["t3"] = [call("note_to_lead", text="backend/app.py has no menu route"), INDEX, FINISH]
+        w["t4"] = [call("write_file", path="backend/routes.py", content="ROUTES = ['/api/menu']\n"), FINISH]
+        fix = T("t4", "Add the menu route", "backend", ["t2"], ["backend/routes.py"])
+        llm = ScriptedLLM(plan={"tasks": [T1, T2, T3]}, workers=w,
+                          notes={"reply": "I am adding a task for the backend.", "decision": "", "replan": True, "reason": "backend"},
+                          reviews=[{"action": "keep", "reason": "ok", "tasks": []},
+                                   {"action": "keep", "reason": "ok", "tasks": []},
+                                   {"action": "update", "reason": "menu route", "tasks": [T1, T2, T3, fix]},
+                                   {"action": "keep", "reason": "ok", "tasks": []}])
+        s, evs = run_engine(llm, review=True)
+        ran = [tid for k, tid, _ in llm.calls if k == "worker"]
+        self.assertEqual(ran[ran.index("t3"):], ["t3", "t4", "t4", "t3", "t3"], "t3 pauses, the fix runs, t3 continues")
+        self.assertEqual(s._status, {"t1": "verified", "t2": "verified", "t3": "verified", "t4": "verified"})
+        self.assertIn("t4", s._plan.by_id()["t3"].depends_on)
+        self.assertIn("paused", [e.data["status"] for e in evs if e.type == "agent.status" and e.agent_id == "a_t3"])
+        resumed = llm.kinds("worker", "t3")[1][2]
+        self.assertTrue(any("You were paused while this was done" in m["content"] for m in resumed if m["role"] == "user"))
+        assert_valid(self, evs)
+
     def test_the_review_sees_what_really_happened(self):
         llm = ScriptedLLM()
         run_engine(llm, review=True)

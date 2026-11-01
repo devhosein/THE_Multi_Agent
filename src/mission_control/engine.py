@@ -74,6 +74,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "integration_cross": "The integration check found {n} problem(s) between agents; adding a fix task",
         "final_check": "Final check of the whole project…",
         "done_integration": "All tasks finished, but the parts still do not work together: {n} integration problem(s) remain.",
+        "waits_for_fix": "“{title}” pauses until {fix} is done, then continues",
     },
     "fa": {
         "analyzing": "در حال تحلیل درخواست…",
@@ -111,12 +112,17 @@ STRINGS: dict[str, dict[str, str]] = {
         "integration_cross": "بررسی اتصال {n} مشکل بین ایجنت‌ها پیدا کرد؛ یک تسک اصلاح اضافه می‌شود",
         "final_check": "بررسی نهایی کل پروژه…",
         "done_integration": "همه‌ی تسک‌ها تمام شد، ولی بخش‌ها هنوز با هم کار نمی‌کنند: {n} مشکل اتصال باقی مانده.",
+        "waits_for_fix": "«{title}» تا انجام {fix} صبر می‌کند و بعد ادامه می‌دهد",
     },
 }
 
 
 class StopRun(Exception):
     """Raised inside the engine thread to unwind cleanly when the user stops the run."""
+
+
+class WaitForFix(Exception):
+    """Raised at a running agent's safe point when the lead added work it must wait for (it goes back in the queue)."""
 
 
 @dataclass
@@ -196,6 +202,7 @@ class EngineSession:
         self._final_reviews = 0
         self._integration_left: list[Problem] = []
         self._fix_for: dict[str, list[Problem]] = {}    # fix task -> the problems it must make disappear
+        self._wait_for: dict[str, list[str]] = {}       # running task -> new tasks it must wait for (then resumes)
         self._evidence = ""                              # the latest integration check, for the lead's reviews
         self._running_agent: str | None = None
         self._awaiting_approval = False
@@ -414,6 +421,10 @@ class EngineSession:
             raise StopRun()
         self._serve_inbox()
         self._serve_reports()
+        if agent_id:
+            tid = next((t for t, a in self._agent_for.items() if a == agent_id), None)
+            if tid in self._wait_for:
+                raise WaitForFix(tid)
         if not self._pause_requested:
             return
         paused_agent = agent_id if agent_id and self._agent_state.get(agent_id) == "running" else None
@@ -477,8 +488,38 @@ class EngineSession:
         if ans.replan and aid:
             self._lead_instructions.append(f"Report from {who}: {text}" + (f" (you answered: {ans.reply})" if ans.reply else ""))
             if self.cfg.review:
+                before = {t.id for t in self._plan.tasks}
                 self._review()
+                added = [t.id for t in self._plan.tasks if t.id not in before]
+                if tid and added and self._status.get(tid) == "running":
+                    # like a manager: "wait until that is fixed, then continue" (it cannot be fixed while you run:
+                    # tasks run one after another, and a live run deadlocked exactly like that)
+                    anc = {t.id: set(t.depends_on) for t in self._plan.tasks}
+                    seen, todo = set(), list(added)
+                    while todo:
+                        x = todo.pop()
+                        if x not in seen:
+                            seen.add(x)
+                            todo += list(anc.get(x, ()))
+                    if tid not in seen:                  # never wait for work that waits for you
+                        self._wait_for[tid] = added
         return ans.reply or ans.reason
+
+    def _requeue(self, task: Task, aid: str) -> None:
+        """The task waits for the work the lead just added, then runs again (its files so far are kept)."""
+        assert self._plan is not None
+        after = self._wait_for.pop(task.id)
+        tasks = [Task(t.id, t.title, t.role, t.goal, t.depends_on + tuple(a for a in after if a not in t.depends_on),
+                      t.owns, t.acceptance) if t.id == task.id else t for t in self._plan.tasks]
+        new = Plan(self._plan.version + 1, tuple(tasks))
+        self._set_agent(aid, "paused")
+        self._set_task(task.id, "pending")
+        names = ", ".join(next((t.title for t in tasks if t.id == a), a) for a in after)
+        self._line("waits_for_fix", title=task.title, fix=names)
+        self._apply_update(new, self._s("waits_for_fix", title=task.title, fix=names))
+        self._lead_msgs.setdefault(aid, []).append(
+            f"You were paused while this was done: {names}. It is finished now: look at the current files again "
+            "(and run check_project if it helps), then continue your task.")
 
     # ------------------------------------------------------------ integration: do the parts work together?
     def _owners(self, path: str) -> list[str]:
@@ -762,7 +803,8 @@ class EngineSession:
         rescues = self.cfg.recoveries if self.cfg.recoveries is not None else prof.recoveries
         guidance: str | None = None
         while True:
-            if self._attempts(task, aid, guidance):
+            ok = self._attempts(task, aid, guidance)
+            if ok or ok is None:            # verified, or back in the queue behind work the lead just added
                 return
             diag = self._diagnose(task)
             if rescues > 0 and diag.action == "retry" and diag.guidance:
@@ -789,7 +831,7 @@ class EngineSession:
                 return
             raise StopRun()
 
-    def _attempts(self, task: Task, aid: str, guidance: str | None) -> bool:
+    def _attempts(self, task: Task, aid: str, guidance: str | None) -> bool | None:
         """Up to `max_attempts` worker attempts, each one told exactly why the previous one was rejected."""
         assert self._plan is not None
         model = self._agent_model.get(aid, self.model)
@@ -814,6 +856,7 @@ class EngineSession:
                                   backoff=self.cfg.backoff)
             self._running_agent = aid
             words = self._last_words.setdefault(task.id, [])
+            yielded = False
 
             def said(text: str, _a=aid, _w=words) -> None:
                 _w.append(text[:600])
@@ -829,9 +872,14 @@ class EngineSession:
                     on_message=said, on_usage=self._usage,
                     log=lambda level, source, message, detail=None, _a=aid, _t=task.id: self._log(level, source, message, detail, task_id=_t, agent_id=_a),
                     limits=limits, sleep=self._sleep, deliver_lead=lambda _a=aid: self._lead_msgs.pop(_a, []))
+            except WaitForFix:
+                yielded = True
             finally:
                 self._running_agent = None
             self._written[task.id] = box.written
+            if yielded:
+                self._requeue(task, aid)
+                return None
             self._notes.extend((task.id, n) for n in box.notes)
             problems = check_task(self.ws, task, box.written) if result.ok else [result.error or "the agent failed"]
             kind = "" if not problems else (result.kind or "checks") if not result.ok else "checks"
