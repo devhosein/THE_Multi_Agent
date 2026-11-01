@@ -145,7 +145,8 @@ class Basics(ServerCase):
         self.assertIn("alpha", names)
         self.assertNotIn(".hidden", names)
         self.assertNotIn("secret.txt", names)  # files are never listed
-        self.assertEqual(body["parent"], str(self.base.parent))
+        # resolved: a Windows temp folder may come as an 8.3 short name (C:\Users\RUNNER~1\...), the listing shows the long one
+        self.assertEqual(body["parent"], str(self.base.resolve().parent))
         self.assertEqual(self.req("GET", "/api/fs?path=" + quote(str(self.base / "secret.txt")))[0], 400)
         self.assertEqual(self.req("GET", "/api/fs?path=" + quote(str(self.base / "ghost")))[0], 400)
         self.assertEqual(self.req("GET", "/api/fs")[0], 200)  # defaults to home

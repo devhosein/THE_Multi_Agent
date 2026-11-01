@@ -2,6 +2,7 @@
 
     pip install playwright && playwright install chromium
     python tests/e2e_ui.py            # screenshots go to ./e2e-shots
+    python tests/e2e_ui.py --browser msedge   # use an installed Edge (or chrome) when Chromium cannot be downloaded
 
 Not part of `unittest discover` on purpose: it needs a browser. It starts its own server, wired to a scripted
 stand-in model (so the LIVE engine path runs without Ollama) and a stand-in folder dialog.
@@ -72,8 +73,11 @@ def approve(pg, timeout=20000):
     pg.wait_for_selector("#gate", state="hidden", timeout=timeout)
 INTER = lambda a, c: a["l"] < c["r"] - 1 and c["l"] < a["r"] - 1 and a["t"] < c["b"] - 1 and c["t"] < a["b"] - 1
 
+CHANNEL = sys.argv[sys.argv.index("--browser") + 1] if "--browser" in sys.argv[:-1] else None
+
 with sync_playwright() as p:
-    b = p.chromium.launch()
+    b = p.chromium.launch(channel=CHANNEL) if CHANNEL else p.chromium.launch()
+    print(f"browser: {CHANNEL or 'bundled chromium'} {b.version}")
 
     # ───────────── A: layout for 1..8 agents, both languages, several window sizes
     for lang, sizes in (("en", [(1366, 768), (1280, 720), (1920, 1080), (1100, 640)]), ("fa", [(1366, 768), (1100, 640)])):
@@ -95,13 +99,23 @@ with sync_playwright() as p:
                   ev('plan.created', {version:1, tasks});
                   tasks.forEach((t, i) => ev('agent.created', {role:t.role, model:'ornith-1.5:9b', title:'Agent '+i, task_ids:[t.id]}, {agent_id:'a'+i}));
                   render();
-                  return new Promise(res => setTimeout(() => {
+                  // measure the FINAL layout. On a cold browser's first page the render itself can come 300-700 ms late,
+                  // and cards and the lead box then glide into place (transitions), so no fixed delay is safe: wait until
+                  // this layout is applied, then until every finite animation has ended (infinite ones, e.g. blink, never do)
+                  const sig = tasks.map((_, i) => 'a' + i).join(',') + '|';
+                  const applied = () => new Promise((res, rej) => { const t0 = performance.now(); (function poll() {
+                    if (window.__mc.ui.layoutSig.startsWith(sig) && document.querySelectorAll('#cards .card').length === n) return res();
+                    if (performance.now() - t0 > 5000) return rej(new Error('layout never applied: ' + window.__mc.ui.layoutSig));
+                    requestAnimationFrame(poll); })(); });
+                  const settled = () => Promise.all(document.getAnimations()
+                    .filter(a => a.effect && a.effect.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null)));
+                  return Promise.all([document.fonts.ready, applied()]).then(() => new Promise(r => setTimeout(r, 50))).then(settled).then(() => {
                     const R = e => { const r = e.getBoundingClientRect(); return {l:r.left, t:r.top, r:r.right, b:r.bottom}; };
                     const st = document.querySelector('#stage');
-                    res({stage: R(st), orch: R(document.querySelector('#orch')), center: R(document.querySelector('#center')),
-                         flow: st.classList.contains('flow'), scrollW: st.scrollWidth, clientW: st.clientWidth,
-                         cards: [...document.querySelectorAll('#cards .card')].map(R)});
-                  }, 700));
+                    return {stage: R(st), orch: R(document.querySelector('#orch')), center: R(document.querySelector('#center')),
+                            flow: st.classList.contains('flow'), scrollW: st.scrollWidth, clientW: st.clientWidth,
+                            cards: [...document.querySelectorAll('#cards .card')].map(R)};
+                  });
                 }""", n)
                 boxes = r["cards"] + [r["orch"], r["center"]]
                 clash = [(i, j) for i in range(len(boxes)) for j in range(i + 1, len(boxes)) if INTER(boxes[i], boxes[j])]
@@ -110,7 +124,8 @@ with sync_playwright() as p:
                     continue
                 S = r["stage"]
                 outside = [i for i, x in enumerate(boxes) if x["l"] < S["l"] - 1 or x["t"] < S["t"] - 1 or x["r"] > S["r"] + 1 or x["b"] > S["b"] + 1]
-                check(not clash and not outside and len(r["cards"]) == n, f"[{lang}] {W}x{H} n={n}: no overlaps, all inside the stage {clash} {outside}")
+                check(not clash and not outside and len(r["cards"]) == n, f"[{lang}] {W}x{H} n={n}: no overlaps, all inside the stage {clash} {outside}"
+                      + (f" stage={S} boxes={[boxes[i] for i in outside]}" if outside else ""))
                 if n == 8 and (W, H) == (1366, 768):
                     pg.screenshot(path=str(SHOTS / f"10_eight_agents_{lang}.png"))
             check(not errs, f"[{lang}] {W}x{H}: no page errors {errs}")
@@ -347,6 +362,22 @@ with sync_playwright() as p:
     pg.keyboard.press("Escape")
     pg.wait_for_function("document.querySelector('#runChip').dataset.state==='completed'", timeout=60000)
     pg.screenshot(path=str(SHOTS / "31_room_fa_done.png"))
+    # Which font really drew the text (asked from the browser engine itself). The code fonts have no Persian, and the
+    # browser's fallback was a MONOSPACE Arabic font (Courier New) that splits words into separate letters.
+    pg.evaluate("""(() => { const code = document.querySelector('.code');
+      for (const [id, s] of [['probe-fa', 'سلام دنیا'], ['probe-en', 'const x = 1;']]) {
+        const sp = document.createElement('span'); sp.id = id; sp.textContent = s; code.append(sp); } })()""")
+    cdp = pg.context.new_cdp_session(pg)
+    cdp.send("DOM.enable"); cdp.send("CSS.enable")
+    doc = cdp.send("DOM.getDocument")["root"]["nodeId"]
+    used = {k: [f["familyName"] for f in cdp.send("CSS.getPlatformFontsForNode", {
+                "nodeId": cdp.send("DOM.querySelector", {"nodeId": doc, "selector": "#" + k})["nodeId"]})["fonts"]]
+            for k in ("probe-fa", "probe-en")}
+    pg.evaluate("document.querySelectorAll('#probe-fa, #probe-en').forEach(n => n.remove())")
+    check(used["probe-fa"] and not any("courier" in f.lower() or "mono" in f.lower() for f in used["probe-fa"]),
+          f"Persian in the file viewer uses a proportional font, so its letters join {used}")
+    mono = lambda f: any(k in f.lower() for k in ("mono", "code", "consolas", "menlo", "courier"))
+    check(used["probe-en"] and all(mono(f) for f in used["probe-en"]), f"code in the file viewer is still in a monospace font {used}")
     check(pg.evaluate(SCROLLS) == [0] * 6, "nothing slides sideways in right-to-left either")
     check(not errs, f"no page errors in Persian {errs}")
     ctx.close()

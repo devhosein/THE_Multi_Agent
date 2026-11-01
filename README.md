@@ -60,7 +60,7 @@ prompt ─► plan (validated DAG) ─► one agent per task ─► your go-ahea
 |---|---|---|
 | `python -m unittest discover -s tests -t .` | engine (scripted model), engine over the real Ollama HTTP protocol, tools sandbox, server, SSE, security, paths, report, translations, scripts, repo hygiene | 249 |
 | `node --test tests/ui_state.test.mjs` | the UI's event reducer | 16 |
-| `python tests/e2e_ui.py` | real browser (`pip install playwright && playwright install chromium`): layouts in both languages, live run, approval, replan, failure decision, logs, report, retry | 118 checks |
+| `python tests/e2e_ui.py` | real browser (`pip install playwright && playwright install chromium`; or `--browser msedge` to use an installed Edge): layouts in both languages, live run, approval, replan, failure decision, logs, report, retry, Persian text in code | 120 checks |
 
 Critical logic is mutation-tested (bugs injected on purpose must make a test fail). CI runs the unit and reducer
 tests on Ubuntu and Windows (Python 3.11 and 3.13) and the browser checks on Ubuntu, on every push.

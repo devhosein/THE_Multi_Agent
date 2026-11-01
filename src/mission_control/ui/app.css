@@ -2,6 +2,15 @@
    Cool drafting paper, ink lines, sharp corners, title-block cells. Status colours are the only
    saturated colours and always mean something. The one big gesture is the light pulse that runs
    along the bus loop when the lead agent hands out (or receives) work. */
+/* Persian/Arabic inside code (file viewer, tree): the code fonts have no Arabic letters, so the browser fell back to
+   a MONOSPACE Arabic font (Courier New) that puts every letter in its own fixed-width cell - the words fell apart.
+   This face covers only the Arabic-script ranges (+ ZWNJ and the direction marks): those letters get a proportional,
+   properly joined font, and every Latin character still uses the code font. */
+@font-face {
+  font-family: "MC Code Persian";
+  src: local("Tahoma"), local("Segoe UI"), local("Noto Sans Arabic"), local("Geeza Pro"), local("DejaVu Sans");
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F;
+}
 :root {
   --paper: #e5eaee;
   --sheet: #f6f8f9;
@@ -21,7 +30,7 @@
   --amber: #a86d00;
   --amber-soft: #f6e8c6;
   --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-code: "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
+  --font-code: "MC Code Persian", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
   --cw: 196px; --ch: 120px; --ow: 300px; --oh: 84px;
 }
 *, *::before, *::after { box-sizing: border-box; }

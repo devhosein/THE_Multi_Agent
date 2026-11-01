@@ -10,8 +10,9 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 - The user tests on **Windows (PowerShell)** with **Ollama** (`ornith-1.5:9b`, `ornith-1.5:35b`). Project folder:
   `C:\D Drive\Programing\THE_Multi_Agent\main` (git: github.com/devhosein/THE_Multi_Agent). The sibling folders
   `v1`–`v3` are old hand-made snapshots: never edit them. Paths contain spaces.
-- The user's network: `files.pythonhosted.org` does not resolve (pip downloads fail; `pypi.org` and GitHub work).
-  Installing Python packages needs the user's VPN or a mirror; ask first.
+- The user's network: some downloads are blocked (pip's file host without VPN; Playwright's Chromium CDN answers 403
+  "not available in your location"). Give the user the install commands; they run them. Playwright is installed in the
+  user's system Python; e2e runs with the installed Edge: `python tests/e2e_ui.py --browser msedge`.
 - What worked well so far: be honest about what is tested and what is not; show evidence (test output, screenshots,
   log excerpts); find root causes before fixing (see `docs/FAILURES.md`); never weaken the code for a weak model —
   add scaffolding instead (strength profiles).
@@ -21,7 +22,7 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 python scripts/serve.py                         # the app: http://127.0.0.1:8765 (Live = Ollama, Demo = recorded run)
 python -m unittest discover -s tests -t .       # 249 tests, ~40 s, stdlib only
 node --test tests/ui_state.test.mjs             # UI reducer (Node >= 18)
-python tests/e2e_ui.py                          # real browser, 118 checks: pip install playwright; playwright install chromium
+python tests/e2e_ui.py                          # real browser, 120 checks (+ --browser msedge on this machine)
 python scripts/run_engine.py --project C:\tmp\x --prompt "..." [--model ornith-1.5:35b] [--approve-plan] [--strength small]
 python scripts/smoke_llm.py --model ornith-1.5:9b   # can this model do structured output, tools and planning?
 python scripts/replay.py path\to\.mission\events.jsonl --speed 0 --no-chunks   # read a run in the terminal
@@ -81,6 +82,6 @@ separate process) · `textview.py` · `ui/` (`index.html`, `app.js`, `state.js`,
 ## Current status
 Phases 0–2 done plus the post-live-test hardening (approval, rescue, decisions, logs/report, strength, replies,
 continuation, i18n, native picker). **Unit and reducer tests pass on the user's Windows machine** (2026-11-01, after
-fixing 4 Windows-only problems). **Still not verified on Windows**: e2e (Playwright could not be installed, see the
-network note), a Live run with each model, and the native folder dialog. Next: Live run + report, then
+fixing 4 Windows-only problems). **e2e passes there with Edge** (120 checks).
+**Still not verified on Windows**: a Live run with each model, and the native folder dialog. Next: Live run + report, then
 `docs/HANDOFF.md` §9 (real verification first).
