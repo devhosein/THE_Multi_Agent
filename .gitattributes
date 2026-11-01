@@ -1,0 +1,3 @@
+# Keep LF everywhere: the engine writes bytes and the tests compare exact content.
+* text=auto eol=lf
+*.png binary

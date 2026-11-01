@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Mission Control runtime data (per-project, never part of the source)
+.mission/
+*.mc-tmp
+
+# Test output
+e2e-shots/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+node_modules/
