@@ -6,6 +6,38 @@ what is not, and what to build next. Written to continue the work in Claude Code
 
 ---
 
+## 0. Where we stopped (2026-11-02, 00:10) — read this first when the user says "continue"
+
+**Done and committed locally (not pushed; last pushed commit is `32dec13`):** single-agent baseline +
+automatic site scorer (`eval/`), integration check (`integration.py`), live reports to the lead, fix tasks, final
+check, evidence-over-claims, `check_project` tool, agents waiting for fixes they caused, `## Integration` in contracts.
+278 unit tests green (+16 Node). Mission Control server stopped; no run is going.
+
+**What the live runs showed** (details: `eval/results/README.md`, `docs/FAILURES.md` row 8):
+- v1 (`live-runs/cafe-35b`): all tasks "verified", site broken (CORS between separately built parts). Scored
+  **53/100** vs a single agent's **85/100** (`live-runs/cafe-solo-35b`, 3.9 min vs 13.1 min).
+- v2: integration check + fix task + right lead decision, but the lead believed a fix agent's claim → run failed
+  honestly (pages 404: leading `/` in `os.path.join`). Fixed: fix tasks judged by the running project, protected
+  from the review, reviews get evidence.
+- v3: same-origin site, agents used `check_project`; QA found a guarded selector mismatch the stdlib check cannot see;
+  deadlock (fix waited for QA). Fixed: the reporting agent steps aside until the fix is done. Stopped by us.
+- v4: lead handled contract conflicts well; the check missed pages served from a nested folder (fixed: every path
+  suffix is tried) and confused the backend agent into a loop; three 35B model calls ran > 10 min (timeouts). Stopped
+  by us before the end; not scored.
+
+**Open:** (1) the 35B model sometimes "thinks" > 10 min per call (worker timeout 600 s, then retried) — try limiting
+thinking (`OllamaClient(think=…)` / `num_predict` for workers) and measure quality; (2) an agent may build another
+agent's part inside its own folder (owns `backend/**` allowed `backend/frontend/…`); (3) the stdlib check cannot run
+JavaScript (guarded selector bugs need a browser; `eval/score_site.py` has one); (4) small UI items: approval
+overlay covers the chat box in the narrow layout, no "message received" indicator, worker notes not shown in the UI;
+(5) the lead sometimes classifies a clear instruction as a comment (no decision recorded).
+
+**Exact next step:** decide with the user how to handle the long thinking (1), then a fresh live run
+`live-runs/cafe-35b-v5` with the same prompt (`eval/tasks/cafe.prompt.txt` minus the palette line; send the palette
+line as a chat message during approval), score it with
+`python eval/score_site.py "<project>" --label multi-agent-v0.3 --browser msedge`, compare with 53 and 85 in
+`eval/results/README.md`. Push to GitHub only when the user asks.
+
 ## 1. TL;DR
 
 - **What**: a local multi-agent software builder. A *lead agent* turns a request into a validated plan, creates one
