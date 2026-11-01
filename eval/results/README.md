@@ -39,6 +39,16 @@ whose columns collapse into one centred stack (10).
   does not serve the pages, but it was the last task, so no review followed and nothing was fixed.
 - One agent writing both sides simply made the backend serve the pages (same origin, no CORS problem).
 
+### Follow-up live runs (same prompt, same model), 2026-11-01/02
+
+Each run exposed the next weak point; each fix has a test that fails without it.
+
+| run | what happened | what changed |
+|---|---|---|
+| v2 | The contract now had an `## Integration` section (backend serves the pages). The lead caught a wrong start command (`npm start`) by itself and added a contract fix. The integration check found the seam after the frontend and added `fix1`; the lead recorded the right decision. But the lead's review narrowed `fix1`'s files, `fix1` passed although every page still returned 404 (a leading `/` made `os.path.join` drop `public/`), and the lead deleted two new fix tasks as "redundant", trusting the agent's claim. Run ended **failed**, honestly. | A fix task passes only when its own problems are gone; the review may not remove/change a pending fix task; reviews get the latest check as *evidence*; agents get `check_project`; problem messages say what the server answered. |
+| v3 | Agents used `check_project` before finishing; the site was same-origin and "fit together". QA found a bug the stdlib check cannot see (`app.js` looked up `#menu-list`, the page had `#menu-container`, guarded by `if`) and told the lead at once; the lead added a frontend fix task. Deadlock: tasks run one after another, the fix waited for QA, QA kept reporting "not fixed". Stopped. | A running agent whose report made the lead add work steps aside (paused, back in the queue behind the fix) and is told what changed when it resumes. |
+| v4 | The backend agent reported contract conflicts at once; the lead recorded a decision and added a contract fix *after* the backend (correctly not pausing it: that would be a cycle). Then the backend agent built pages inside `backend/frontend/`; the check looked for them only one folder up and reported false problems, which confused it into a loop. The 35B model also had three model calls of more than 10 minutes (timeouts, retried). Stopped. | The check tries every path suffix to find pages served from a nested folder. Open: very long thinking of the 35B model; an agent doing another agent's work inside its own folder. |
+
 ### What to build from it
 1. Real verification (phase 6): run the project the way this scorer does (start the server, load the pages, read the
    console) and send failures back to the responsible agent. The scorer is a ready prototype of that verifier.

@@ -154,6 +154,21 @@ class IntegrationCheck(unittest.TestCase):
         self.assertIn("menu.json not found", r.problems[0].message)
 
     # ---------------------------------------------------------------- scope
+    def test_pages_in_a_nested_folder_served_from_the_root_are_found(self):
+        """Live run cafe-35b-v4: pages in backend/frontend/, served at /index.html; only one folder was stripped."""
+        server = SERVER.format(pages=True, cors=False, start="pass").replace(
+            'ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))',
+            'ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "site")')
+        (self.root / "backend" / "server.py").write_bytes(textwrap.dedent(server).encode())
+        site = self.root / "backend" / "web" / "site"
+        site.mkdir(parents=True)
+        (site / "index.html").write_bytes(PAGE.format(css="style.css", extra="").encode())
+        (site / "style.css").write_bytes(b"body { color: #4a2c1a; }")
+        (site / "app.js").write_bytes(APP_JS.format(base="").encode())
+        r = check_integration(self.root)
+        self.assertEqual(r.served_by, "backend")
+        self.assertEqual(r.problems, [], [p.message for p in r.problems])
+
     def test_nothing_to_check_without_pages_or_a_server(self):
         empty = Path(self.tmp.name) / "empty"
         empty.mkdir()

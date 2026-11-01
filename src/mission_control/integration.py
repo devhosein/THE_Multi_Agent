@@ -339,7 +339,8 @@ def _check(root: Path, report: Report, started: dict) -> None:
     tried: list[str] = []                     # evidence for the fixer: what the server answered for the pages
     if port:
         for rel in parsed:
-            for cand in ("/" + rel, "/" + "/".join(rel.split("/")[1:])) if "/" in rel else ("/" + rel,):
+            parts = rel.split("/")              # a server may serve any folder as its root: try every suffix
+            for cand in ["/" + "/".join(parts[i:]) for i in range(len(parts))]:
                 st, hd, _ = _request(port, "GET", cand)
                 if len(tried) < 6:
                     tried.append(f"GET {cand} -> {st or 'no answer'}")
