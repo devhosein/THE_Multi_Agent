@@ -13,6 +13,8 @@ the standard library:
   * the classes a page uses must be styled by the stylesheets it loads (an agent wrote `.form-group` in the CSS and
     `form-row` in the HTML: the reservation form came out unstyled, live run cafe-35b-v5)
   * a page served by the backend must not make the browser's automatic /favicon.ico request fail
+  * every link between the pages must lead somewhere (benchmark pilot: the pages were served as /menu.html, the
+    navigation linked to /menu, a visitor clicking "Menu" got a 404 while every check passed)
   * when Playwright is installed, `browser.py` then uses the pages in a real browser (JavaScript errors, data that
     never reaches the page, forms that do nothing); files changed meanwhile (stored test bookings) are restored
 
@@ -47,7 +49,7 @@ NUM_RE = re.compile(r"(?<![\d.])([1-9]\d{3,4})(?![\d.])")
 @dataclass
 class Problem:
     kind: str                    # server_start | page_missing | asset_missing | api_missing | api_error |
-                                 # relative_api | cross_origin | dom_id | style_missing
+                                 # relative_api | cross_origin | dom_id | style_missing | link_broken
                                  # | js_error | data_missing | form_failed | low_contrast (browser.py)
     message: str                 # what is wrong and how to fix it, for the agent and the lead
     files: tuple[str, ...] = ()  # project-relative files involved (used to find the responsible task)
@@ -432,6 +434,11 @@ def _check(root: Path, report: Report, started: dict) -> None:
         tried.insert(0, f"GET / -> {st or 'no answer'}")
         if st == 200 and "html" in hd.get("content-type", "") and not page_url:
             page_url = {rel: "/" + rel for rel in parsed}
+        elif page_url and not (st == 200 and "html" in hd.get("content-type", "")):
+            report.problems.append(Problem(                  # the address a visitor opens first
+                "page_missing", f"the server serves the pages ({', '.join(sorted(page_url.values())[:4])}) but answers "
+                f"{st or 'nothing'} for / , the address a visitor opens first: serve the landing page there",
+                (report.backend or "",)))
     evidence = f" (the server answered: {', '.join(tried[:5])})" if tried and not page_url else ""
     report.served_by = "backend" if page_url else "files" if parsed else ""
     report.pages = dict(page_url)
@@ -461,6 +468,29 @@ def _check(root: Path, report: Report, started: dict) -> None:
                         + ("" if (root / target).is_file() else " (the file does not exist)"), (rel, target)))
             elif not (root / target).is_file():
                 report.problems.append(Problem("asset_missing", f"{rel} loads {ref}, but {target} does not exist", (rel,)))
+    # links between the pages, followed like a visitor would (only through the backend: a file server is not ours)
+    if port and page_url:
+        answers: dict[str, int] = {}
+        for rel, pp in parsed.items():
+            if rel not in page_url:
+                continue
+            base = page_url[rel].rsplit("/", 1)[0] + "/"
+            bad = []
+            for href in dict.fromkeys(pp.links):
+                target = href.split("#")[0].split("?")[0]
+                if not target or not _local(href) or target.endswith((".pdf", ".zip")):
+                    continue
+                url = target if target.startswith("/") else "/" + _resolve(base.lstrip("/") + "x", target)
+                if url not in answers:
+                    answers[url] = _request(port, "GET", url)[0]
+                if not (200 <= answers[url] < 400):
+                    bad.append(f"{href} ({answers[url] or 'no answer'})")
+            if bad:
+                report.problems.append(Problem(
+                    "link_broken", f"{rel} links to {', '.join(bad)}: a visitor who clicks gets an error. The server "
+                    f"serves the pages at {', '.join(sorted(set(page_url.values())))}; make the links and the server's "
+                    "routes agree.", tuple(f for f in (rel, report.backend) if f)))
+
     # files referenced from the stylesheets (url(...)), relative to each stylesheet; checked once per stylesheet
     seen_css: set[str] = set()
     for rel, pp in parsed.items():

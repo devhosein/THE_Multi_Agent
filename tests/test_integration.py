@@ -153,6 +153,32 @@ class IntegrationCheck(unittest.TestCase):
         self.assertEqual(self.kinds(r)[0], "server_start")
         self.assertIn("menu.json not found", r.problems[0].message)
 
+    def test_links_that_lead_nowhere(self):
+        """Benchmark pilot (cafe-mc-1): pages served as /menu.html, the navigation linked to /menu: 404 on click."""
+        extra = ('<a href="/menu">Menu</a> <a href="menu.html">Menu</a> <a href="#top">Top</a> '
+                 '<a href="mailto:hi@cafe.example">Mail</a> <a href="https://example.com/x">Out</a>')
+        self.project(extra=extra)
+        (self.root / "menu.html").write_bytes(PAGE.format(css="style.css", extra="").encode())
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["link_broken"])
+        p = r.problems[0]
+        self.assertFalse(p.minor)
+        self.assertIn("links to /menu (404)", p.message)
+        self.assertNotIn("menu.html (", p.message)
+        self.assertIn("/index.html", p.message)                              # where the pages really are
+        self.assertEqual(p.files, ("index.html", "backend/server.py"))
+
+    def test_the_site_root_must_show_a_page(self):
+        """A visitor opens http://localhost:8000/ first; a server that only answers /index.html shows them an error."""
+        server = SERVER.format(pages=True, cors=False, start="pass").replace(
+            '(self.path.strip("/") or "index.html")', 'self.path.strip("/")')
+        self.project()
+        (self.root / "backend" / "server.py").write_bytes(textwrap.dedent(server).encode())
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["page_missing"])
+        self.assertIn("for / , the address a visitor opens first", r.problems[0].message)
+        self.assertEqual(r.problems[0].files, ("backend/server.py",))
+
     def test_a_page_without_an_icon_makes_the_browser_fail_on_favicon(self):
         """Live run cafe-35b-v5 lost its "no failed requests" points to the browser's own GET /favicon.ico (404)."""
         self.project()
