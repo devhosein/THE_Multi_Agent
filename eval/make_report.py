@@ -160,6 +160,37 @@ def time_chart(rows: list[dict]) -> str:
     return card(w, h, "".join(body), "Time to a finished project", "Mission Control runs its tasks one after another today")
 
 
+FUNCTIONAL = ("F1", "F2", "F3", "F4", "F5", "F6", "F7")
+
+
+def headline(rows: list[dict]) -> str:
+    """Three numbers for the top of the README, computed from the runs (nothing typed in by hand)."""
+    def of(sys_id):
+        return [r for r in rows if r["system"] == sys_id and r.get("automatic") is not None]
+    mc, solo, chk = of("mc"), of("solo"), of("solo-check")
+    mean = lambda rs: statistics.mean(r["automatic"] for r in rs) if rs else 0                     # noqa: E731
+    full = lambda rs: sum(1 for r in rs if sum((r["points"].get(k) or 0) for k in FUNCTIONAL) == 70)  # noqa: E731
+    tiles = [
+        (f"{mean(mc):.0f}/85", "Mission Control, mean of all runs",
+         f"single agent {mean(solo):.0f} · with our checks {mean(chk):.0f}", SYSTEMS[0][2]),
+        (f"{mean(mc) - mean(solo):+.0f}", "points vs a plain single agent",
+         f"same model, same prompts, {len(mc)} runs each", SYSTEMS[0][2]),
+        (f"{full(mc)}/{len(mc)}", "runs with every feature working",
+         f"single agent {full(solo)}/{len(solo)} · with our checks {full(chk)}/{len(chk)}", SYSTEMS[0][2]),
+    ]
+    w, h, tw = 760, 190, 229
+    body = []
+    for i, (big, label, sub, color) in enumerate(tiles):
+        x = 28 + i * (tw + 8)
+        body.append(f'<rect x="{x}" y="76" width="{tw}" height="92" rx="10" fill="#ffffff" stroke="{GRID}"/>'
+                    f'<rect x="{x}" y="76" width="5" height="92" rx="2" fill="{color}"/>'
+                    f'<text x="{x + 20}" y="116" font-size="34" font-weight="700" fill="{INK}">{escape(big)}</text>'
+                    f'<text x="{x + 20}" y="138" font-size="12.5" fill="{INK}">{escape(label)}</text>'
+                    f'<text x="{x + 20}" y="156" font-size="11.5" fill="{MUTED}">{escape(sub)}</text>')
+    return card(w, h, "".join(body), "Mission Control vs a single agent",
+                "Two web-app tasks, ornith-1.5:35b on one local GPU, scored by a real browser")
+
+
 def gallery(rows: list[dict], task: str) -> Path | None:
     """The desktop page of each system's median run, side by side."""
     from PIL import Image, ImageDraw, ImageFont
@@ -204,7 +235,7 @@ def summary(rows: list[dict]) -> str:
             if not rs:
                 continue
             a = [r["automatic"] for r in rs]
-            full = sum(1 for r in rs if sum((r["points"].get(k) or 0) for k in ("F1", "F2", "F3", "F4", "F5", "F6", "F7")) == 70)
+            full = sum(1 for r in rs if sum((r["points"].get(k) or 0) for k in FUNCTIONAL) == 70)
             mins = statistics.mean(r.get("seconds") or 0 for r in rs) / 60
             tok = statistics.mean(r.get("tokens_out") or 0 for r in rs)
             lines.append(f"| {tname} | {name} | {len(rs)} | **{statistics.mean(a):.1f}** ({min(a)}–{max(a)}) | "
@@ -217,6 +248,7 @@ def main() -> None:
     (BENCH / "score.svg").write_text(score_chart(rows), encoding="utf-8", newline="\n")
     (BENCH / "criteria.svg").write_text(criteria_chart(rows), encoding="utf-8", newline="\n")
     (BENCH / "time.svg").write_text(time_chart(rows), encoding="utf-8", newline="\n")
+    (BENCH / "headline.svg").write_text(headline(rows), encoding="utf-8", newline="\n")
     for task, _ in TASKS:
         gallery(rows, task)
     text = summary(rows)

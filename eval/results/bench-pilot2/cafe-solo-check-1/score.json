@@ -1,0 +1,44 @@
+{
+ "project": "C:\\D Drive\\Programing\\THE_Multi_Agent\\live-runs\\bench\\cafe-solo-check-1",
+ "points": {
+  "F1": 0,
+  "F2": 0,
+  "F3": 10,
+  "F4": 0,
+  "F5": 0,
+  "Q1": 5,
+  "F7": 0,
+  "F6": 0,
+  "Q2": 0,
+  "Q3": 0,
+  "Q4": null
+ },
+ "notes": {
+  "backend": "backend\\server.py",
+  "F1": "listening: False, non-stdlib imports: none",
+  "served_by": "static file server",
+  "F3": "story: True, opening hours: True",
+  "F4": "0/0 menu items visible on /menu.html",
+  "F5": "form fields filled: None, stored in a JSON file: False, confirmation shown: False",
+  "Q1": "extra width at 375px: {'landing': 0, 'menu': 0, 'reserve': 0}",
+  "F7": [
+   "HTTP 404: http://127.0.0.1:8001/css/style.css",
+   "HTTP 404: http://127.0.0.1:8001/js/common.js",
+   "HTTP 404: http://127.0.0.1:8001/js/index.js",
+   "HTTP 404: http://127.0.0.1:8001/menu.html",
+   "HTTP 404: http://127.0.0.1:8001/reservation.html",
+   "console: Failed to load resource: the server responded with a status of 404 (File not found)",
+   "failed: http://127.0.0.1:8001/css/style.css",
+   "failed: http://127.0.0.1:8001/js/common.js",
+   "failed: http://127.0.0.1:8001/js/index.js"
+  ],
+  "Q2": "no tests written",
+  "Q3": "no run command found",
+  "Q4": "design: reviewer score 0-15 from the screenshots"
+ },
+ "size": {
+  "files": 10,
+  "lines": 1788
+ },
+ "automatic_total": 15
+}

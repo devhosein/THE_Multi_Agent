@@ -75,13 +75,15 @@ class Report:
         lines = [self.summary()] + [f"- [{p.kind}{', minor' if p.minor else ''}] {p.message} "
                                     f"(files: {', '.join(f for f in p.files if f)})"
                                     for p in self.problems]
+        if self.port:   # benchmark: an agent read "on port 55603" and hard-coded it; nothing then ran on the real port
+            lines.append("note: the check ran your server on a temporary port of its own (through the PORT environment "
+                         "variable); keep your server's own port as the contract says.")
         return "\n".join(lines + [f"note: {n}" for n in self.notes])
 
     def summary(self) -> str:
         if not self.ran:
             return "integration check: nothing to run (" + ("; ".join(self.notes) or "no pages and no server") + ")"
-        head = f"integration check: backend {self.backend or '-'}" + (f" on port {self.port}" if self.port else "") + \
-               f", pages served by {self.served_by or '-'}: "
+        head = f"integration check: backend {self.backend or '-'}, pages served by {self.served_by or '-'}: "
         return head + (f"{len(self.problems)} problem(s)" if self.problems else "everything fits together")
 
 
@@ -328,8 +330,8 @@ def _start(backend: Path, root: Path, report: Report) -> tuple[subprocess.Popen 
                 return proc, p
         time.sleep(0.15)
     report.problems.append(Problem(
-        "server_start", f"{_rel(root, backend)} started but did not listen on port {port_env} (PORT) "
-        f"or on {defaults or 'any port written in the code'} within {START_TIMEOUT:g}s",
+        "server_start", f"{_rel(root, backend)} started but did not listen within {START_TIMEOUT:g}s (the check offered "
+        f"it a free port through the PORT environment variable and also watched {defaults or 'the ports in the code'})",
         (_rel(root, backend),)))
     return proc, None
 

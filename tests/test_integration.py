@@ -278,6 +278,16 @@ class IntegrationCheck(unittest.TestCase):
         (self.root / "tests" / "test_x.py").write_text("import http.server\nif __name__ == '__main__': pass\n")
         self.assertEqual(find_backend(self.root).name, "server.py")
 
+    def test_the_report_never_shows_the_temporary_port(self):
+        """Benchmark: an agent read "backend on port 55603" in the report and hard-coded that port; the project then
+        did not run on its real port at all (15/85)."""
+        r = self.project()
+        self.assertTrue(r.port)
+        text = r.as_text()
+        self.assertNotIn(str(r.port), text)
+        self.assertIn("temporary port", text)
+        self.assertIn("keep your server's own port", text)
+
     def test_the_server_is_stopped_afterwards(self):
         import socket
         r = self.project()
