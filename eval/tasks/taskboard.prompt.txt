@@ -1,0 +1,3 @@
+Build a small task board web app. One page lists the tasks loaded from a small JSON API; a form adds a task with a title and a priority (low, medium or high); each task can be marked as done and can be deleted. Backend: Python standard library only (http.server), storing the tasks in a JSON file. Frontend: plain HTML, CSS and JavaScript, responsive, clean and modern design.
+
+Use a calm palette of slate blue and white with a teal accent. Keep all page text in English.
