@@ -278,6 +278,39 @@ class IntegrationCheck(unittest.TestCase):
         (self.root / "tests" / "test_x.py").write_text("import http.server\nif __name__ == '__main__': pass\n")
         self.assertEqual(find_backend(self.root).name, "server.py")
 
+    def test_urls_completed_at_run_time_are_not_called_without_their_id(self):
+        """Benchmark, task board: the page called PATCH /api/tasks/${id}; the check called PATCH /api/tasks (405) and a
+        fix task chased a route that was fine."""
+        js = (APP_JS.format(base="") + 'function done(id) { return fetch(`/api/tasks/${id}`, {method: "PATCH"}); }\n'
+              'function drop(id) { return fetch("/api/tasks/" + id, {method: "DELETE"}); }\n')
+        r = self.project(js=js)
+        self.assertEqual(r.problems, [], [p.message for p in r.problems])
+
+    def test_an_icon_declared_in_the_body_does_not_count(self):
+        """Benchmark: <link rel="icon"> at the end of <body>: the browser still asked for /favicon.ico (404)."""
+        self.project()
+        page = self.root / "index.html"
+        page.write_bytes(page.read_bytes().replace(b'<link rel="icon" href="data:,">', b"").replace(
+            b"</body>", b'<link rel="icon" href="data:,"></body>'))
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["asset_missing"])
+        self.assertIn("/favicon.ico", r.problems[0].message)
+
+    def test_an_empty_answer_while_the_data_file_is_full(self):
+        """Benchmark, cafe: the server read backend/data/menu.json (empty); the menu was in data/menu.json."""
+        server = SERVER.format(pages=True, cors=False, start="pass").replace(
+            'json.dumps([{{"name": "Espresso", "price": 3}}])'.replace("{{", "{").replace("}}", "}"), '"[]"')
+        self.project()
+        (self.root / "backend" / "server.py").write_bytes(textwrap.dedent(server).encode())
+        (self.root / "data").mkdir()
+        (self.root / "data" / "menu.json").write_bytes(b'{"items": [{"name": "Espresso", "price": 3}, {"name": "Latte", "price": 4}]}')
+        (self.root / "data" / "reservations.json").write_bytes(b"[]")
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["data_missing"])
+        self.assertIn("GET /api/menu answers '[]'", r.problems[0].message)
+        self.assertIn("data/menu.json holds 2 entries", r.problems[0].message)
+        self.assertEqual(r.problems[0].files, ("backend/server.py",))
+
     def test_the_report_never_shows_the_temporary_port(self):
         """Benchmark: an agent read "backend on port 55603" in the report and hard-coded that port; the project then
         did not run on its real port at all (15/85)."""

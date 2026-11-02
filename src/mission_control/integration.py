@@ -129,15 +129,17 @@ class _PageParser(HTMLParser):
         self.links: list[str] = []
         self.styles: list[str] = []      # <style> blocks
         self.icon = False                # <link rel="icon">: the browser then does not ask for /favicon.ico
-        self._in_script = self._in_style = False
+        self._in_script = self._in_style = self._in_body = False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if a.get("id"):
             self.ids.add(a["id"])
         self.classes.update((a.get("class") or "").split())
+        if tag == "body":
+            self._in_body = True
         if tag == "link" and "icon" in (a.get("rel") or "").lower().split():
-            self.icon = True
+            self.icon = self.icon or not self._in_body    # browsers read icons in <head> only (benchmark run)
         elif tag == "a" and a.get("href"):
             self.links.append(a["href"])
         elif tag == "style":
@@ -241,10 +243,52 @@ def _method(src: str, at: int) -> str:
     return m.group(1).upper() if m else "GET"
 
 
+def _entries(data) -> int:
+    """How many records (objects inside lists) a JSON value holds, at any depth."""
+    if isinstance(data, list):
+        return sum(1 if isinstance(v, dict) else 0 for v in data) + sum(_entries(v) for v in data if isinstance(v, dict))
+    if isinstance(data, dict):
+        return sum(_entries(v) for v in data.values())
+    return 0
+
+
+def _data_behind_empty_answer(root: Path, raw: bytes, path: str) -> tuple[str, int] | None:
+    """An API that answers an empty collection while the data file for that resource is full (benchmark, cafe: the
+    server read backend/data/menu.json, empty; the menu was in data/menu.json; the page showed no menu)."""
+    import json
+    try:
+        answer = json.loads(raw)
+    except ValueError:
+        return None
+    if _entries(answer) or not isinstance(answer, (dict, list)):
+        return None
+    word = path.rstrip("/").rsplit("/", 1)[-1].lower()         # /api/menu -> menu: only the file for this resource
+    for p in _files(root, ".json"):
+        if p.name in ("package.json", "package-lock.json", "tsconfig.json") or not word or word not in p.stem.lower():
+            continue
+        try:
+            data = json.loads(p.read_bytes())
+        except ValueError:
+            continue
+        if _entries(data):
+            return _rel(root, p), _entries(data)
+    return None
+
+
+def _dynamic(src: str, end: int) -> bool:
+    """The URL goes on with a value only known at run time: `/api/tasks/${id}` or "/api/tasks/" + id. Calling the
+    fixed part alone tests a route the page never uses (benchmark, task board: PATCH /api/tasks -> 405, a fix task
+    then chased a route that was fine)."""
+    rest = src[end:end + 40]
+    return rest.startswith("$") or bool(re.match(r"""['"`]\s*\+""", rest))
+
+
 def _api_calls(src: str, file: str) -> list[_ApiCall]:
     bases = {m.group(1): m.group(3) for m in BASE_RE.finditer(src)}
     calls: list[_ApiCall] = []
     for m in API_RE.finditer(src):
+        if _dynamic(src, m.end()):
+            continue
         literal, var, path = m.group(2), m.group(3), m.group(4)
         origin = None
         if literal.startswith("http"):
@@ -255,6 +299,8 @@ def _api_calls(src: str, file: str) -> list[_ApiCall]:
         calls.append(_ApiCall(path, _method(src, m.end()), origin, file))
     for name, base in bases.items():                       # `${API}/menu` where API = "http://host:port/api"
         for m in re.finditer(r"\$\{\s*" + re.escape(name) + r"\s*\}(/[\w/-]*)", src):
+            if _dynamic(src, m.end()):
+                continue
             u = urlsplit(base)
             if "/api" in u.path or "/api" in m.group(1):
                 calls.append(_ApiCall((u.path.rstrip("/") + m.group(1)).rstrip("/"), _method(src, m.end()),
@@ -618,6 +664,13 @@ def _check(root: Path, report: Report, started: dict) -> None:
                 report.problems.append(Problem(
                     "api_error", f"{c.method} {c.path} (called by {owner}) fails with HTTP {st}: "
                     f"{raw[:300].decode('utf-8', 'replace')}", files))
+            if c.method == "GET" and st == 200:
+                held = _data_behind_empty_answer(root, raw, c.path)
+                if held:
+                    report.problems.append(Problem(
+                        "data_missing", f"GET {c.path} answers {raw[:120].decode('utf-8', 'replace')!r}, nothing in it, "
+                        f"but {held[0]} holds {held[1]} entries: the server reads another file, or "
+                        "loses them on the way", (report.backend or "",)))
             if c.origin is None:
                 if not page_url:
                     report.problems.append(Problem(

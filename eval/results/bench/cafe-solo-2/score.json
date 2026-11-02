@@ -1,0 +1,38 @@
+{
+ "project": "C:\\D Drive\\Programing\\THE_Multi_Agent\\live-runs\\bench\\cafe-solo-2",
+ "points": {
+  "F1": 10,
+  "F2": 10,
+  "F3": 10,
+  "F4": 0,
+  "F5": 8,
+  "Q1": 5,
+  "F7": 0,
+  "F6": 5,
+  "Q2": 0,
+  "Q3": 5,
+  "Q4": null
+ },
+ "notes": {
+  "backend": "backend\\server.py",
+  "F1": "listening: True, non-stdlib imports: none",
+  "F2": "GET /api/menu -> 200, 16 items with name+price",
+  "served_by": "backend",
+  "F3": "story: True, opening hours: True",
+  "F4": "0/16 menu items visible on /menu.html",
+  "F5": "form fields filled: 7, stored in a JSON file: True, confirmation shown: False",
+  "Q1": "extra width at 375px: {'landing': 0, 'menu': 0, 'reserve': 0}",
+  "F7": [
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "F6": "POST /api/reservations with {} -> 400",
+  "Q2": "no tests written",
+  "Q3": "a run command is documented",
+  "Q4": "design: reviewer score 0-15 from the screenshots"
+ },
+ "size": {
+  "files": 12,
+  "lines": 2070
+ },
+ "automatic_total": 53
+}

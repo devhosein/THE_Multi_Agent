@@ -1,0 +1,36 @@
+{
+ "project": "C:\\D Drive\\Programing\\THE_Multi_Agent\\live-runs\\bench\\taskboard-mc-1",
+ "points": {
+  "F1": 10,
+  "F2": 10,
+  "F3": 10,
+  "F4": 15,
+  "F5": 15,
+  "F7": 5,
+  "Q1": 5,
+  "F6": 5,
+  "Q2": 0,
+  "Q3": 5,
+  "Q4": null
+ },
+ "notes": {
+  "backend": "backend\\server.py",
+  "F1": "listening: True, non-stdlib imports: none",
+  "F2": "GET /api/tasks -> 200, JSON list: True",
+  "served_by": "backend",
+  "F3": "a form with a text field: True",
+  "F4": "shown: True, stored: True",
+  "F5": "done: clicked: Toggle done state for Eval task 4595 -> stored state changed: True; delete: clicked: 🗑 -> gone from page: True, from file: True",
+  "Q1": "extra width at 375px: 0",
+  "F7": "none",
+  "F6": "POST /api/tasks with {} -> 400",
+  "Q2": "no tests written",
+  "Q3": "a run command is documented",
+  "Q4": "design: reviewer score 0-15 from the screenshots"
+ },
+ "size": {
+  "files": 6,
+  "lines": 1436
+ },
+ "automatic_total": 80
+}

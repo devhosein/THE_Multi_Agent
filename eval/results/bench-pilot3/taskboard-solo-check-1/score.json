@@ -1,0 +1,39 @@
+{
+ "project": "C:\\D Drive\\Programing\\THE_Multi_Agent\\live-runs\\bench\\taskboard-solo-check-1",
+ "points": {
+  "F1": 10,
+  "F2": 10,
+  "F3": 10,
+  "F4": 15,
+  "F5": 8,
+  "F7": 0,
+  "Q1": 5,
+  "F6": 5,
+  "Q2": 0,
+  "Q3": 0,
+  "Q4": null
+ },
+ "notes": {
+  "backend": "backend\\server.py",
+  "F1": "listening: True, non-stdlib imports: none",
+  "F2": "GET /api/tasks -> 200, JSON list: True",
+  "served_by": "backend",
+  "F3": "a form with a text field: True",
+  "F4": "shown: True, stored: True",
+  "F5": "done: clicked: Mark Eval task 5405 as done -> stored state changed: False; delete: clicked: × -> gone from page: True, from file: True",
+  "Q1": "extra width at 375px: 0",
+  "F7": [
+   "HTTP 404: http://127.0.0.1:8000/api/tasks/7412127c/done",
+   "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "F6": "POST /api/tasks with {} -> 400",
+  "Q2": "no tests written",
+  "Q3": "no run command found",
+  "Q4": "design: reviewer score 0-15 from the screenshots"
+ },
+ "size": {
+  "files": 4,
+  "lines": 945
+ },
+ "automatic_total": 63
+}
