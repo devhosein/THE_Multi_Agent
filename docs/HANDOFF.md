@@ -6,37 +6,39 @@ what is not, and what to build next. Written to continue the work in Claude Code
 
 ---
 
-## 0. Where we stopped (2026-11-02, 00:10) — read this first when the user says "continue"
+## 0. Where we are (2026-11-02, 14:30) — read this first
 
-**Done and committed locally (not pushed; last pushed commit is `32dec13`):** single-agent baseline +
-automatic site scorer (`eval/`), integration check (`integration.py`), live reports to the lead, fix tasks, final
-check, evidence-over-claims, `check_project` tool, agents waiting for fixes they caused, `## Integration` in contracts.
-278 unit tests green (+16 Node). Mission Control server stopped; no run is going.
+**Result:** since the browser check, three live runs in a row beat the single agent on the cafe task:
+**91, 87, 88** vs **85** (first multi-agent run: 53). Every functional point and no JavaScript errors in all three.
+Details per run: `eval/results/README.md`; every failure and its fix: `docs/FAILURES.md` rows 9–17.
+Committed locally on 2026-11-02, not pushed (last pushed commit: `32dec13`). 299 unit tests
+(+16 Node, 124 e2e with Edge) green. Server stopped after the last run.
 
-**What the live runs showed** (details: `eval/results/README.md`, `docs/FAILURES.md` row 8):
-- v1 (`live-runs/cafe-35b`): all tasks "verified", site broken (CORS between separately built parts). Scored
-  **53/100** vs a single agent's **85/100** (`live-runs/cafe-solo-35b`, 3.9 min vs 13.1 min).
-- v2: integration check + fix task + right lead decision, but the lead believed a fix agent's claim → run failed
-  honestly (pages 404: leading `/` in `os.path.join`). Fixed: fix tasks judged by the running project, protected
-  from the review, reviews get evidence.
-- v3: same-origin site, agents used `check_project`; QA found a guarded selector mismatch the stdlib check cannot see;
-  deadlock (fix waited for QA). Fixed: the reporting agent steps aside until the fix is done. Stopped by us.
-- v4: lead handled contract conflicts well; the check missed pages served from a nested folder (fixed: every path
-  suffix is tried) and confused the backend agent into a loop; three 35B model calls ran > 10 min (timeouts). Stopped
-  by us before the end; not scored.
+**What changed today, each from a live-run failure (v4–v9):**
+- `llm.py`: output capped (`num_predict` 32,768; never `num_ctx`): runaway answers no longer hit the 600 s timeout;
+  the worker drops a cut-off answer and tells the agent to act.
+- Worker prompt: "The team" — each task's files and state ("starts after you") + never build another agent's files.
+- Lead: a wish that fits the plan is still an instruction ("when in doubt, record it"); a restated instruction counts.
+- Compaction: an old write call keeps only its path; the tool result says what was removed and which classes/ids the
+  file defines. Write tools refuse the compaction note as content (models imitated it: v4 overwrote server.py 9 times).
+- `integration.py`: unstyled classes (`style_missing`), undefined CSS variables, failing `/favicon.ico`, pages served
+  under other names (follows links), CSS fetched through the server; cosmetic problems are `minor` (sent back once,
+  never fail a task or the run); data files restored after every check.
+- `browser.py` (new, optional — Playwright + Chromium/Edge/Chrome; `MC_BROWSER_CHECK=auto|off|<channel>`): loads each
+  page the backend serves, reports JS errors / failed requests, API data that never reaches the page, forms that do
+  nothing or are rejected, and unreadable text. The app itself stays stdlib-only; tests turn it off by default.
+- UI: the approval panel no longer covers the chat box on narrow screens; the chat box no longer falls off-screen.
 
-**Open:** (1) the 35B model sometimes "thinks" > 10 min per call (worker timeout 600 s, then retried) — try limiting
-thinking (`OllamaClient(think=…)` / `num_predict` for workers) and measure quality; (2) an agent may build another
-agent's part inside its own folder (owns `backend/**` allowed `backend/frontend/…`); (3) the stdlib check cannot run
-JavaScript (guarded selector bugs need a browser; `eval/score_site.py` has one); (4) small UI items: approval
-overlay covers the chat box in the narrow layout, no "message received" indicator, worker notes not shown in the UI;
-(5) the lead sometimes classifies a clear instruction as a comment (no decision recorded).
+**Open (in order of value):**
+1. Requested content is not verified (v9: no "story" on the landing page). Idea: the lead turns the request into a
+   checklist at planning time and the browser check confirms each item is on a page (phase 6, "executable acceptance").
+2. No tests are ever written or run (Q2 = 0 in every run). The engine could run the project's tests (`unittest`).
+3. Time: 7–15 min vs 4 for one agent; fixes inside one task dominate. Measure where the time goes.
+4. The eval is no longer independent: the engine's browser check works like `eval/score_site.py`. Write new tasks the
+   engine was not developed against (phase 7) and run each 3 times; give the single agent the same check for fairness.
+5. Small UI items: no "message received" indicator; worker notes not shown in the UI.
 
-**Exact next step:** decide with the user how to handle the long thinking (1), then a fresh live run
-`live-runs/cafe-35b-v5` with the same prompt (`eval/tasks/cafe.prompt.txt` minus the palette line; send the palette
-line as a chat message during approval), score it with
-`python eval/score_site.py "<project>" --label multi-agent-v0.3 --browser msedge`, compare with 53 and 85 in
-`eval/results/README.md`. Push to GitHub only when the user asks.
+**Exact next step:** items 1 and 4. Push only when the user asks.
 
 ## 1. TL;DR
 

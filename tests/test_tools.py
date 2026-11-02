@@ -6,6 +6,7 @@ from pathlib import Path
 from mission_control.eventlog import EventLog
 from mission_control.events import T
 from mission_control.tools import MAX_FILE_BYTES, ToolBox
+from mission_control.worker import compact
 from mission_control.workspace import init_workspace
 
 
@@ -28,6 +29,25 @@ class ToolBoxTests(unittest.TestCase):
         self.assertEqual((self.ws.root / "backend/app.py").read_text(), "x = 1\n")
         self.assertEqual(self.box.written, ["backend/app.py"])
         self.assertTrue(self.box.call("write_file", {"path": "README.md", "content": "hi"}).startswith("OK"))
+
+    def test_the_note_that_replaced_a_write_in_the_history_is_never_written_into_a_file(self):
+        """Live runs v4, v7, v8: models imitated their compacted history and wrote "<<11949 characters written to
+        backend/server.py; …>>" as the new content of server.py (v4 then looped), or appended it to style.css (v7)."""
+        real = "body { color: #4a2c1a; }\n" * 20
+        self.box.call("write_file", {"path": "backend/style.css", "content": real})
+        history = [{"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": "write_file", "arguments": {"path": "backend/style.css", "content": real}}}]},
+            {"role": "tool", "tool_name": "write_file", "content": "OK"}, {"role": "assistant", "content": "next"}]
+        compact(history)
+        note = history[1]["content"].split("\n", 1)[1]
+        old = "<<11949 characters written to backend/server.py; read_file shows the file>>"
+        for tool in ("write_file", "append_file"):
+            for content in (note, "\n" + note + "\n", old):
+                r = self.box.call(tool, {"path": "backend/style.css", "content": content})
+                self.assertTrue(r.startswith("ERROR: this is not file content"), r)
+            r = self.box.call(tool, {"path": "backend/style.css"})                 # an imitated call without content
+            self.assertIn("removed to save space", r)
+        self.assertEqual((self.ws.root / "backend/style.css").read_text(), real)   # untouched
 
     def test_not_owned_is_refused_and_nothing_is_created(self):
         r = self.box.call("write_file", {"path": "frontend/x.html", "content": "<p>"})

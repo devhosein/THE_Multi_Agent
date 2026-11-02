@@ -83,9 +83,10 @@ class ScriptedLLM:
             self.calls.append(("reply", None, [dict(m) for m in messages]))
             m = re.search(r'while you work:\n"(.*)"\n\n', messages[-1]["content"], re.S)
             text = m.group(1) if m else ""
-            # default: a message ending in "?" is a question, anything else an instruction
-            r = self._pick(self.replies, {"reply": f"Got it: {text}", "is_instruction": not text.rstrip().endswith("?"),
-                                          "instruction": text})
+            # default: a message ending in "?" is a question, anything else an instruction (restated as the prompt asks:
+            # "" for a question)
+            ins = not text.rstrip().endswith("?")
+            r = self._pick(self.replies, {"reply": f"Got it: {text}", "is_instruction": ins, "instruction": text if ins else ""})
             return ChatResult(content=r if isinstance(r, str) else json.dumps(r), tokens_in=50, tokens_out=20)
         if "action" in props:
             self.calls.append(("review", None, [dict(m) for m in messages]))

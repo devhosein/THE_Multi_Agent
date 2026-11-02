@@ -45,6 +45,18 @@ class HappyPath(unittest.TestCase):
         self.assertLess(order.index(("t1", "verified")), order.index(("t2", "running")))
         self.assertLess(order.index(("t2", "verified")), order.index(("t3", "running")))   # sequential in phase 2
 
+    def test_each_agent_knows_who_builds_what_and_when(self):
+        """Live run cafe-35b-v4: told only the other tasks' titles, the backend agent built the pages itself inside
+        backend/; it did not know that the frontend agent would build them after it."""
+        llm = ScriptedLLM()
+        run_engine(llm)
+        system = next(c[2][0]["content"] for c in llm.calls if c[0] == "worker" and c[1] == "t2")
+        team = system.split("The team (who builds what")[1]
+        self.assertIn("t1 [architect] API contract - builds contracts/** - finished", team)
+        self.assertIn("t3 [frontend] Frontend - builds frontend/** - starts after you", team)
+        self.assertNotIn("t2 [backend]", team)
+        self.assertIn("not even a copy or a stand-in inside your own folder", system)
+
     def test_usage_is_cumulative_and_exact(self):
         _, ev = run_engine(ScriptedLLM())
         u = [(e.data["tokens_in"], e.data["tokens_out"]) for e in of(ev, EV.USAGE)]

@@ -8,6 +8,7 @@ import unittest
 from mission_control.engine import EngineSession
 from mission_control.events import T as EV, check_stream
 from mission_control.llm import ChatResult
+from mission_control.orchestrator import answer_user
 from mission_control.session import SessionError
 from mission_control.worker import compact
 
@@ -174,6 +175,41 @@ class Replies(unittest.TestCase):
         self.assertTrue(any("Could not generate a reply" in e.data["message"] for e in of(ev, EV.LOG)))
 
 
+class TellingInstructionsApart(unittest.TestCase):
+    """Live run cafe-35b-v5: a clear instruction during approval was answered ("I'll fold this into the frontend")
+    but not recorded as a decision, so no agent would have seen it."""
+
+    class Stub:
+        def __init__(self, obj):
+            self.obj = obj
+
+        def chat(self, messages, *, schema=None, tools=None, temperature=None):
+            return ChatResult(content=json.dumps(self.obj))
+
+    def ask(self, obj, text="Use a warm palette."):
+        return answer_user(self.Stub({"reply": "Got it.", **obj}), [{"role": "system", "content": "lead"}], text).instruction
+
+    def test_either_signal_makes_it_an_instruction(self):
+        self.assertEqual(self.ask({"is_instruction": True, "instruction": ""}), "Use a warm palette.")
+        self.assertEqual(self.ask({"is_instruction": False, "instruction": "Use coffee brown."}), "Use coffee brown.")
+        self.assertEqual(self.ask({"is_instruction": True, "instruction": "Use coffee brown."}), "Use coffee brown.")
+
+    def test_the_lead_is_told_that_a_wish_that_fits_the_plan_is_still_an_instruction(self):
+        seen = []
+
+        class Spy(self.Stub):
+            def chat(s, messages, **kw):
+                seen.append(messages[-1]["content"])
+                return super().chat(messages, **kw)
+
+        answer_user(Spy({"reply": "ok", "is_instruction": True, "instruction": "x"}), [], "Use warm colors.")
+        self.assertIn("EVEN IF it already fits the current plan", seen[0])
+        self.assertIn("when in doubt, it is an instruction", seen[0])
+
+    def test_a_question_stays_a_question(self):
+        self.assertIsNone(self.ask({"is_instruction": False, "instruction": ""}, "Which port do you use?"))
+
+
 class Loops(unittest.TestCase):
     def test_the_test_sh_loop_from_the_real_run_is_stopped_with_a_diagnosis(self):
         same = call("write_file", path="backend/test.sh", content="node test.js\n")
@@ -193,6 +229,23 @@ class Loops(unittest.TestCase):
         self.assertTrue(warned, "the agent must be warned before it is stopped")
         self.assertEqual(statuses(ev, "t2")[:3], ["running", "failed", "running"])            # the retry then succeeded
         self.assertEqual(statuses(ev, "t2")[-1], "verified")
+
+    def test_an_answer_that_never_ends_is_told_to_act_and_the_task_goes_on(self):
+        """Live run cafe-35b-v4: three answers thought until the 600 s timeout; the same calls then took seconds.
+        With the output cap such an answer comes back cut off ("length") and without a tool call."""
+        runaway = ChatResult(content="", thinking="Let me reconsider the document root. " * 3000,
+                             tokens_in=9000, tokens_out=32768, done_reason="length")
+        w = happy_workers()
+        w["t2"] = [runaway, APP_PY, FINISH]
+        llm = ScriptedLLM(workers=w)
+        s = make_engine(llm)
+        s.start()
+        s.join(10)
+        ev = s.log.read()
+        self.assertEqual(statuses(ev, "t2"), ["running", "done", "verified"])              # same attempt, no failure
+        second = [c for c in llm.calls if c[0] == "worker" and c[1] == "t2"][1][2]
+        self.assertIn("ran out of room while you were still thinking", second[-1]["content"])
+        self.assertTrue(any("thought until it ran out of room" in e.data["message"] for e in of(ev, EV.LOG)))
 
     def test_different_calls_are_not_a_loop(self):
         w = happy_workers()
@@ -216,7 +269,33 @@ class Compaction(unittest.TestCase):
         third = [c for c in llm.calls if c[0] == "worker" and c[1] == "t2"][2][2]
         dumped = json.dumps(third)
         self.assertNotIn("x = 1\\nx = 1", dumped)
-        self.assertIn(f"<<{len(big)} characters written to backend/app.py", dumped)
+        call_args = [c["function"]["arguments"] for m in third if m["role"] == "assistant" for c in m.get("tool_calls") or []]
+        self.assertEqual(call_args[0], {"path": "backend/app.py"})          # no content, and no note to imitate
+        self.assertIn(f"{len(big)} characters of content were removed from this conversation", dumped)
+
+    def test_dropped_content_keeps_the_names_other_files_must_match(self):
+        """Live run cafe-35b-v5: the frontend agent wrote styles.css (.form-group), its content left the history,
+        and the page it wrote next used form-row: the reservation form came out unstyled. The names stay, in the tool
+        result (live runs v4/v7/v8: a note inside the call itself was imitated as file content)."""
+        css = ".form-group { margin: 8px; }\n.btn-primary:hover { color: #fff; } /* .old */\n" + "x { y: z; }\n" * 400
+        page = '<form id="booking"><div class="form-group wide"><input></div></form>'
+        js = 'const f = document.getElementById("booking"); f.classList.add("is-sent"); document.querySelector(".wide");'
+        msgs = [{"role": "system", "content": "s"}]
+        for path, content in (("css/style.css", css), ("index.html", page), ("app.js", js), ("x.txt", "y")):
+            msgs.append({"role": "assistant", "content": "", "tool_calls": [call("write_file", path=path, content=content)]})
+            msgs.append({"role": "tool", "tool_name": "write_file", "content": f"OK: wrote {path}"})
+        msgs.append({"role": "assistant", "content": "done"})
+        compact(msgs)
+        self.assertEqual([m["tool_calls"][0]["function"]["arguments"] for m in msgs[1:9:2]],
+                         [{"path": p} for p in ("css/style.css", "index.html", "app.js", "x.txt")])
+        notes = [m["content"] for m in msgs[2:10:2]]
+        self.assertIn("It styles the classes: btn-primary, form-group.]", notes[0])
+        self.assertNotIn("old", notes[0])
+        self.assertIn("It has the ids: booking; uses the classes: form-group, wide.]", notes[1])
+        self.assertIn("It looks up the ids: booking; uses the classes: is-sent, wide.]", notes[2])
+        self.assertTrue(notes[3].startswith("OK: wrote x.txt\n[1 characters of content were removed"), notes[3])
+        compact(msgs)                                                        # nothing is added twice
+        self.assertEqual(msgs[2]["content"].count("were removed"), 1)
 
     def test_compact_keeps_the_newest_reads_whole(self):
         msgs = [{"role": "system", "content": "s"}]

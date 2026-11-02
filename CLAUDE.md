@@ -20,9 +20,9 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 ## Commands
 ```powershell
 python scripts/serve.py                         # the app: http://127.0.0.1:8765 (Live = Ollama, Demo = recorded run)
-python -m unittest discover -s tests -t .       # 249 tests, ~40 s, stdlib only
+python -m unittest discover -s tests -t .       # 299 tests, ~2 min, stdlib only (browser-check tests need Playwright)
 node --test tests/ui_state.test.mjs             # UI reducer (Node >= 18)
-python tests/e2e_ui.py                          # real browser, 120 checks (+ --browser msedge on this machine)
+python tests/e2e_ui.py                          # real browser, 124 checks (+ --browser msedge on this machine)
 python scripts/run_engine.py --project C:\tmp\x --prompt "..." [--model ornith-1.5:35b] [--approve-plan] [--strength small]
 python scripts/smoke_llm.py --model ornith-1.5:9b   # can this model do structured output, tools and planning?
 python scripts/replay.py path\to\.mission\events.jsonl --speed 0 --no-chunks   # read a run in the terminal
@@ -36,7 +36,8 @@ browser UI (ui/*.js)  ◄── SSE /api/events (Last-Event-ID = after_seq) ─�
       └── POST /api/run|message|command|approve|resolve|retry|upload|pick-folder|reset,  GET /api/report|models|fs|status
 session = EngineSession (engine.py, live) | MockSession (session.py, demo replay of mock.py)
 engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + tools.py (sandboxed) → checks.py
-        → integration.py (runs the whole project like a browser) → orchestrator.py (lead: briefing, plan review,
+        → integration.py (runs the whole project like a browser; + browser.py in a real browser when Playwright is
+          installed) → orchestrator.py (lead: briefing, plan review,
         reports from agents, failure diagnosis, answering the user) → profiles.py (model strength)
 ```
 - **The UI is a pure function of the event stream** (`ui/state.js` reducer, also tested in Node). Demo and engine emit
@@ -80,15 +81,14 @@ engine: planner.py → plan.py (validated DAG) → per task: worker.py loop + to
 ## Where things are
 `src/mission_control/`: `engine.py` run orchestration · `orchestrator.py` lead prompts/review/diagnosis/replies ·
 `worker.py` agent loop, retries, compaction, loop detection · `tools.py` list/read/write/append/note/finish ·
-`checks.py` mechanical verification · `planner.py` · `plan.py` DAG, ownership, replan rules · `profiles.py` strength ·
+`checks.py` mechanical verification · `integration.py` whole-project check · `browser.py` optional browser check ·
+`planner.py` · `plan.py` DAG, ownership, replan rules · `profiles.py` strength ·
 `llm.py` Ollama client + error classes · `events.py` · `eventlog.py` · `session.py` demo player · `mock.py` demo script
 (en/fa) · `server.py` HTTP · `report.py` diagnostic report · `paths.py` · `folder_picker.py` native dialog (tkinter,
 separate process) · `textview.py` · `ui/` (`index.html`, `app.js`, `state.js`, `i18n.js`, `app.css`).
 `tests/helpers.py` has `ScriptedLLM` / `OllamaStandIn`: a scripted model to test the engine without Ollama.
 
 ## Current status
-Phases 0–2 done plus the post-live-test hardening (approval, rescue, decisions, logs/report, strength, replies,
-continuation, i18n, native picker). **Unit and reducer tests pass on the user's Windows machine** (2026-11-01, after
-fixing 4 Windows-only problems). **e2e passes there with Edge** (120 checks).
-**Still not verified on Windows**: a Live run with each model, and the native folder dialog. Next: Live run + report, then
-`docs/HANDOFF.md` §9 (real verification first).
+Phases 0–2 done plus the post-live-test hardening, the integration work and the optional browser check. Unit,
+reducer and e2e tests pass on the user's Windows machine. **Live runs on the cafe task (35B): since the browser check
+91, 87, 88 vs the single agent's 85** (`eval/results/README.md`). Open items and the next step: `docs/HANDOFF.md` §0.

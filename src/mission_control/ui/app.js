@@ -484,6 +484,7 @@
   function applyLayout(L) {
     const stage = $('#stage'), center = $('#center'), orch = $('#orch'), bus = $('#bus');
     stage.classList.toggle('flow', L.mode === 'flow');
+    document.documentElement.style.setProperty('--dock-h', $('#dock').offsetHeight + 'px');
     stage.style.setProperty('--cw', CARD.w + 'px'); stage.style.setProperty('--ch', CARD.h + 'px');
     stage.style.setProperty('--ow', ORCHBOX.w + 'px'); stage.style.setProperty('--oh', ORCHBOX.h + 'px');
     if (L.mode === 'flow') {

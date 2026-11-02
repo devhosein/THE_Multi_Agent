@@ -603,8 +603,8 @@ class EngineSession:
             return False
         self._line("final_check")
         _, problems = self._integration(None)
-        self._integration_left = problems
-        if not problems:
+        self._integration_left = [p for p in problems if not p.minor]
+        if not self._integration_left:
             self._line("integration_ok")
             return False
         last = next((t.id for t in reversed(self._plan.tasks) if self._status.get(t.id) == "verified"), None)
@@ -625,6 +625,8 @@ class EngineSession:
             self._log("warn", "chat", "Could not generate a reply; the message is treated as an instruction",
                       agent_id=agent_id)
         self._say(ans.reply or self._s("reply_failed"), agent_id)
+        self._log("debug", "chat", "The message was taken as " + ("an instruction" if ans.instruction else "a question or comment"),
+                  ans.instruction or "", agent_id=agent_id)
         if ans.instruction:
             self._record_decision(ans.instruction, "user")
         return ans.instruction
@@ -648,7 +650,8 @@ class EngineSession:
                 continue
             task = self._plan.by_id()[tid]
             model = self._agent_model.get(target, self.model)
-            context = [{"role": "system", "content": build_worker_system(task, self._plan, self.ws, self._decisions_text(), self._profile(model))}]
+            context = [{"role": "system", "content": build_worker_system(
+                task, self._plan, self.ws, self._decisions_text(), self._profile(model), self._status)}]
             if tid in self._results:
                 context.append({"role": "assistant", "content": f"I finished my task: {self._results[tid]}"})
             ins = self._answer(target, model, context, text)
@@ -785,7 +788,7 @@ class EngineSession:
                 break
             self._execute(ready[0])
             cross, self._cross = self._cross, []
-            if cross and self._status.get(ready[0].id) == "verified":
+            if any(not p.minor for p in cross) and self._status.get(ready[0].id) == "verified":
                 self._add_fix_task(cross, ready[0].id)
             if self.cfg.review and any(self._status[t.id] == "pending" for t in self._plan.tasks):
                 self._review()
@@ -850,7 +853,7 @@ class EngineSession:
                           on_note=lambda text, _t=task, _a=aid: self._report(_t, _a, text),
                           run_check=self._check_for_agent if self.cfg.integration else None)
             box.written = list(self._written.get(task.id, []))      # files from earlier attempts still count
-            system = build_worker_system(task, self._plan, self.ws, self._decisions_text(), prof)
+            system = build_worker_system(task, self._plan, self.ws, self._decisions_text(), prof, self._status)
             user = build_worker_user(feedback, box.written, self._pending_for_agent.pop(aid, []), guidance)
             limits = WorkerLimits(max_steps=self.cfg.max_steps or prof.max_steps, temperature=prof.temperature,
                                   backoff=self.cfg.backoff)
@@ -885,9 +888,12 @@ class EngineSession:
             kind = "" if not problems else (result.kind or "checks") if not result.ok else "checks"
             if not problems and self.cfg.integration:
                 own, self._cross = self._integration(task)
-                if own:
+                if own and (attempt < max_attempts or any(not p.minor for p in own)):
                     self._line("integration_own", title=task.title)
                     problems, kind = [f"integration check: {p.message}" for p in own], "integration"
+                elif own:       # cosmetic problems left after the last attempt: noted, not worth failing the task
+                    self._log("warn", "integration", f"{task.id} accepted with {len(own)} minor problem(s) left",
+                              "\n".join(f"- [{p.kind}] {p.message}" for p in own), task_id=task.id)
             if not problems:
                 self._results[task.id] = result.summary
                 self._set_task(task.id, "done")

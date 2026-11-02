@@ -13,6 +13,7 @@
 }
 :root {
   --paper: #e5eaee;
+  --dock-h: 0px;          /* height of the chat box, measured by app.js (narrow screens keep it free of overlays) */
   --sheet: #f6f8f9;
   --white: #ffffff;
   --ink: #17212f;
@@ -176,7 +177,7 @@ html[dir="rtl"] .proj-name { text-align: right; }
 /* overflow: clip (not hidden): in an RTL page the off-canvas drawer creates leftward overflow that
    `hidden` still lets focus/scrollIntoView scroll into view, sliding the whole room sideways. */
 .workspace { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; overflow: clip; }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }  /* min-height: stacked under the plan on narrow screens, the chat box was pushed below the window */
 .stage { position: relative; flex: 1; min-height: 0; overflow: hidden; overflow: clip; }
 .bus { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
 .bus .loop { fill: none; stroke: var(--line-strong); stroke-width: 1.25; }
@@ -418,7 +419,8 @@ html[dir="rtl"] .proj-name { text-align: right; }
   background: var(--sheet); border: 1px solid var(--ink); padding: 16px 18px 14px; box-shadow: 5px 5px 0 var(--line-strong); animation: fadeUp .35s both; }
 .gate-body { overflow: auto; min-height: 0; flex: 1 1 auto; }
 .gate-card > footer { flex: none; }
-.stage.flow .gate { position: fixed; z-index: 30; }
+/* narrow screens: over the whole window, but never over the chat box (the panel itself invites a message) */
+.stage.flow .gate { position: fixed; z-index: 30; bottom: var(--dock-h); }
 .gate-card h3 { margin: 0 0 4px; font-size: 17px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .gate-card h4 { margin: 12px 0 4px; font-size: 13px; color: var(--ink-2); }
 .gate-lead { margin: 0 0 10px; color: var(--ink-2); font-size: 13px; }

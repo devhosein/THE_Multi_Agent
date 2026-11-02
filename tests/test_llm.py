@@ -4,7 +4,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from mission_control.llm import (
-    ChatResult, LLMError, OllamaClient, StructuredOutputError, extract_json, generate_structured,
+    MAX_OUTPUT_TOKENS, ChatResult, LLMError, OllamaClient, StructuredOutputError, extract_json, generate_structured,
 )
 
 
@@ -60,7 +60,7 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(path, "/api/chat")
         self.assertEqual(payload["model"], "ornith-1.5:9b")
         self.assertEqual(payload["format"], {"type": "object"})
-        self.assertEqual(payload["options"], {"temperature": 0.1, "num_ctx": 8192})
+        self.assertEqual(payload["options"], {"temperature": 0.1, "num_ctx": 8192, "num_predict": MAX_OUTPUT_TOKENS})
         self.assertIs(payload["think"], False)
         self.assertFalse(payload["stream"])
         self.assertEqual((res.tokens_in, res.tokens_out), (11, 22))
@@ -75,10 +75,18 @@ class OllamaClientTests(unittest.TestCase):
 
     def test_optional_fields_are_omitted_when_unset(self):
         _Handler.reply = {"message": {"content": "ok"}}
-        self.client.chat([{"role": "user", "content": "hi"}])
+        OllamaClient(host=self.client.host, timeout=5, num_predict=None).chat([{"role": "user", "content": "hi"}])
         payload = _Handler.seen[0][1]
         for key in ("format", "tools", "options", "think"):
             self.assertNotIn(key, payload)
+
+    def test_by_default_only_the_output_is_capped_never_the_context(self):
+        """A runaway answer (35B, thinking that never ended) hit the 600 s timeout three times in one live run.
+        The cap ends such an answer early; num_ctx stays unset (a too-small context cut tool calls off)."""
+        _Handler.reply = {"message": {"content": "ok"}}
+        self.client.chat([{"role": "user", "content": "hi"}])
+        self.assertEqual(_Handler.seen[0][1]["options"], {"num_predict": MAX_OUTPUT_TOKENS})
+        self.assertGreater(MAX_OUTPUT_TOKENS, 28_957)    # the largest healthy answer seen in the live runs
 
     def test_streaming(self):
         _Handler.stream_lines = [

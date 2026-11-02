@@ -10,6 +10,11 @@ the standard library:
   * find the API calls in the pages' JavaScript and call them: a missing route, a server error, a relative URL while
     the backend does not serve the pages, or a call to another origin without CORS are all reported
   * element ids the JavaScript looks up (getElementById / querySelector('#…')) must exist on a page that loads it
+  * the classes a page uses must be styled by the stylesheets it loads (an agent wrote `.form-group` in the CSS and
+    `form-row` in the HTML: the reservation form came out unstyled, live run cafe-35b-v5)
+  * a page served by the backend must not make the browser's automatic /favicon.ico request fail
+  * when Playwright is installed, `browser.py` then uses the pages in a real browser (JavaScript errors, data that
+    never reaches the page, forms that do nothing); files changed meanwhile (stored test bookings) are restored
 
 Each `Problem` names the files involved, so the engine can route it to the task that owns them. The check never
 raises and always stops the server it started."""
@@ -27,6 +32,8 @@ from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
+from . import browser as browser_check
+
 SKIP_DIRS = {".mission", "node_modules", "__pycache__", ".git", ".venv", "venv", "inputs", "tests", "test"}
 START_TIMEOUT = 8.0
 API_RE = re.compile(r"""(['"`])((?:https?://[^'"`\s/]+)?(?:\$\{\s*(\w+)\s*\})?(/api(?:/[^'"`\s?#$]*)?))""")
@@ -40,12 +47,14 @@ NUM_RE = re.compile(r"(?<![\d.])([1-9]\d{3,4})(?![\d.])")
 @dataclass
 class Problem:
     kind: str                    # server_start | page_missing | asset_missing | api_missing | api_error |
-                                 # relative_api | cross_origin | dom_id
+                                 # relative_api | cross_origin | dom_id | style_missing
+                                 # | js_error | data_missing | form_failed | low_contrast (browser.py)
     message: str                 # what is wrong and how to fix it, for the agent and the lead
     files: tuple[str, ...] = ()  # project-relative files involved (used to find the responsible task)
+    minor: bool = False          # cosmetic (unstyled classes, no icon): sent back once, never fails a task or a run
 
     def to_dict(self) -> dict:
-        return {"kind": self.kind, "message": self.message, "files": list(self.files)}
+        return {"kind": self.kind, "message": self.message, "files": list(self.files), "minor": self.minor}
 
 
 @dataclass
@@ -56,10 +65,13 @@ class Report:
     port: int | None = None
     problems: list[Problem] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    pages: dict[str, str] = field(default_factory=dict)          # page file -> URL path on the backend
+    page_files: dict[str, tuple[str, ...]] = field(default_factory=dict)   # page file -> it and its local scripts
 
     def as_text(self) -> str:
         """For a model: the summary and every problem with the files involved."""
-        lines = [self.summary()] + [f"- [{p.kind}] {p.message} (files: {', '.join(f for f in p.files if f)})"
+        lines = [self.summary()] + [f"- [{p.kind}{', minor' if p.minor else ''}] {p.message} "
+                                    f"(files: {', '.join(f for f in p.files if f)})"
                                     for p in self.problems]
         return "\n".join(lines + [f"note: {n}" for n in self.notes])
 
@@ -109,12 +121,23 @@ class _PageParser(HTMLParser):
         self.scripts: list[str] = []
         self.assets: list[str] = []
         self.inline: list[str] = []
-        self._in_script = False
+        self.classes: set[str] = set()
+        self.links: list[str] = []
+        self.styles: list[str] = []      # <style> blocks
+        self.icon = False                # <link rel="icon">: the browser then does not ask for /favicon.ico
+        self._in_script = self._in_style = False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if a.get("id"):
             self.ids.add(a["id"])
+        self.classes.update((a.get("class") or "").split())
+        if tag == "link" and "icon" in (a.get("rel") or "").lower().split():
+            self.icon = True
+        elif tag == "a" and a.get("href"):
+            self.links.append(a["href"])
+        elif tag == "style":
+            self._in_style = True
         if a.get("style"):
             self.assets += _css_urls(a["style"])
         if tag == "script":
@@ -130,10 +153,14 @@ class _PageParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "script":
             self._in_script = False
+        elif tag == "style":
+            self._in_style = False
 
     def handle_data(self, data):
         if self._in_script:
             self.inline.append(data)
+        elif self._in_style:
+            self.styles.append(data)
 
 
 def _local(ref: str) -> bool:
@@ -167,6 +194,26 @@ def _guarded_ids(code: str) -> set[str]:
         if re.search(rf"if\s*\(\s*!?\s*{v}\s*(?:\)|&&|\|\|)|\b{v}\s*&&|\b{v}\?\.|{v}\s*(?:===|!==|==|!=)\s*null", code):
             out.add(ident)
     return out
+
+
+def css_classes(text: str) -> set[str]:
+    """The class names a stylesheet styles (selectors only: comments, strings, url() and declarations removed)."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"url\([^)]*\)|(['\"]).*?\1", "", text)
+    text = re.sub(r"\{[^{}]*\}", "{}", text)
+    return set(re.findall(r"\.(-?[_a-zA-Z][\w-]*)", text))
+
+
+def _string_words(code: str) -> set[str]:
+    """Every word inside the string literals of a script: classes it adds, selectors it queries, HTML it builds."""
+    out: set[str] = set()
+    for m in re.finditer(r"(['\"`])((?:\\.|(?!\1).)*?)\1", code, re.S):
+        out.update(re.findall(r"[\w-]+", m.group(2)))
+    return out
+
+
+def _norm(body: bytes) -> bytes:
+    return body.replace(b"\r\n", b"\n").strip()
 
 
 def _css_urls(text: str) -> list[str]:
@@ -299,16 +346,38 @@ def _stop(proc: subprocess.Popen | None) -> None:
 
 
 # ------------------------------------------------------------------ the check
-def check_integration(root: str | Path) -> Report:
+DATA_SUFFIXES = (".json", ".jsonl", ".csv", ".txt", ".db", ".sqlite", ".sqlite3")
+
+
+def _data_files(root: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for suffix in DATA_SUFFIXES for p in _files(root, suffix)}
+
+
+def check_integration(root: str | Path, browser: str | None = None) -> Report:
+    """`browser`: auto | off | a channel (default: the MC_BROWSER_CHECK environment variable, else auto)."""
     root = Path(root).resolve()
     report = Report()
     started: dict[str, subprocess.Popen | None] = {}
+    before = _data_files(root)                 # the check books tables and posts {}: undo what it stored
     try:
         _check(root, report, started)
+        if report.port and report.pages:
+            browser_check.check_pages(
+                report.port, report.pages, lambda rel: report.page_files.get(rel, (rel,)), report.backend,
+                lambda kind, msg, files, minor=False: report.problems.append(Problem(kind, msg, files, minor)),
+                report.notes.append, browser)
     except Exception as e:  # noqa: BLE001 - the check must never take the engine down
         report.notes.append(f"the integration check itself failed: {type(e).__name__}: {e}")
     finally:
         _stop(started.get("proc"))
+        try:
+            for path, data in _data_files(root).items():
+                if path not in before:
+                    path.unlink()
+                elif before[path] != data:
+                    path.write_bytes(data)
+        except OSError as e:
+            report.notes.append(f"could not restore a data file: {e}")
     return report
 
 
@@ -347,12 +416,27 @@ def _check(root: Path, report: Report, started: dict) -> None:
                 if st == 200 and "html" in hd.get("content-type", "html"):
                     page_url[rel] = cand
                     break
+        # pages served under other names (/menu for frontend/menu.html): follow the pages' own links and compare
+        # what comes back with the files (live run cafe-35b-v5)
+        missing = {rel: _norm((root / rel).read_bytes()) for rel in parsed if rel not in page_url}
+        if missing:
+            hrefs = ["/"] + ["/" + h.split("#")[0].split("?")[0].lstrip("/") for pp in parsed.values() for h in pp.links
+                             if _local(h) and h.startswith("/")]
+            for href in list(dict.fromkeys(hrefs))[:25]:
+                st, hd, body = _request(port, "GET", href)
+                hit = next((rel for rel, want in missing.items() if st == 200 and _norm(body) == want), None)
+                if hit:
+                    page_url[hit] = href
+                    del missing[hit]
         st, hd, _ = _request(port, "GET", "/")
         tried.insert(0, f"GET / -> {st or 'no answer'}")
         if st == 200 and "html" in hd.get("content-type", "") and not page_url:
             page_url = {rel: "/" + rel for rel in parsed}
     evidence = f" (the server answered: {', '.join(tried[:5])})" if tried and not page_url else ""
     report.served_by = "backend" if page_url else "files" if parsed else ""
+    report.pages = dict(page_url)
+    report.page_files = {rel: tuple(dict.fromkeys([rel] + [_resolve(rel, r) for r in pp.scripts if _local(r)]))
+                         for rel, pp in parsed.items()}
     if port and parsed and page_url and len(page_url) < len(parsed):
         for rel in parsed:
             if rel not in page_url:
@@ -368,7 +452,7 @@ def _check(root: Path, report: Report, started: dict) -> None:
             target = _resolve(rel, ref)
             if rel in page_url and port:
                 base = page_url[rel].rsplit("/", 1)[0] + "/"
-                url = ref if ref.startswith("/") else _resolve(base.lstrip("/") + "x", ref)
+                url = ref.split("#")[0].split("?")[0] if ref.startswith("/") else _resolve(base.lstrip("/") + "x", ref)
                 url = "/" + url.lstrip("/")
                 st, _, _ = _request(port, "GET", url)
                 if st != 200:
@@ -416,8 +500,71 @@ def _check(root: Path, report: Report, started: dict) -> None:
                 f"it ({', '.join(loaders)}) has such an element: the lookup returns null and the script breaks there",
                 tuple(dict.fromkeys([owner] + loaders))))
 
+    # classes each page uses that none of its stylesheets styles (scripts may use classes as hooks: those are fine)
+    css_files = _files(root, ".css")
+
+    def sheet(rel: str, ref: str) -> tuple[str, str | None]:
+        """(the stylesheet's file, its text) as the browser gets it: through the server when it serves the page."""
+        if rel in page_url and port:
+            base = page_url[rel].rsplit("/", 1)[0] + "/"
+            url = ref.split("#")[0].split("?")[0] if ref.startswith("/") else _resolve(base.lstrip("/") + "x", ref)
+            url = "/" + url.lstrip("/")
+            st, _, body = _request(port, "GET", url)
+            if st != 200:
+                return url, None
+            same = next((_rel(root, c) for c in css_files if _norm(c.read_bytes()) == _norm(body)), url.lstrip("/"))
+            return same, body.decode("utf-8", "replace")
+        target = _resolve(rel, ref)
+        return target, (root / target).read_bytes().decode("utf-8", "replace") if (root / target).is_file() else None
+
+    script_words = set().union(*(_string_words(c) for c in js_src.values())) if js_src else set()
+    css_texts: dict[str, str] = {}                          # every stylesheet the pages use, as the browser gets it
+    for rel, pp in parsed.items():
+        refs = [ref for ref in pp.assets if ref.split("?")[0].endswith(".css")]
+        if not (refs or pp.styles) or any(not _local(ref) for ref in refs):
+            continue                                        # no own stylesheet, or a CDN one we cannot read
+        got = [sheet(rel, ref) for ref in refs]
+        if any(text is None for _, text in got):
+            continue                                        # a missing stylesheet is reported as asset_missing
+        sheets = [f for f, _ in got]
+        css_texts.update({f: t or "" for f, t in got})
+        if pp.styles:
+            css_texts[rel] = " ".join(pp.styles)
+        styled = css_classes(" ".join(pp.styles + [text or "" for _, text in got]))
+        unstyled = sorted(pp.classes - styled - script_words)
+        if len(unstyled) >= 2:
+            used = set().union(*(q.classes for q in parsed.values())) | script_words
+            spare = sorted(styled - used)
+            report.problems.append(Problem(
+                "style_missing", f"{rel} uses class(es) {', '.join(unstyled[:20])} that no stylesheet it loads "
+                f"({', '.join(sheets) or 'its <style>'}) defines, so those parts show up unstyled"
+                + (f"; the stylesheet styles {', '.join(spare[:20])}, which no page uses (a name mismatch?)" if spare else "")
+                + ". Use the same class names in the HTML and the CSS.", tuple(dict.fromkeys([rel] + sheets)), minor=True))
+
+    # CSS variables used without a fallback but defined nowhere: the browser drops the whole declaration (live run
+    # cafe-35b-v8: `background: …, var(--coffee-800)` with only 900/700/500/300 defined -> white headings on cream)
+    defined = set(re.findall(r"(--[\w-]+)\s*:", " ".join(css_texts.values())))
+    defined |= {m for c in js_src.values() for m in re.findall(r"""setProperty\(\s*['"](--[\w-]+)""", c)}
+    for css, text in css_texts.items():
+        missing = sorted(set(re.findall(r"var\(\s*(--[\w-]+)\s*\)", text)) - defined)
+        if missing:
+            near = sorted({d for d in defined for m in missing if d.rsplit("-", 1)[0] == m.rsplit("-", 1)[0]})
+            report.problems.append(Problem(
+                "style_missing", f"{css} uses the CSS variable(s) {', '.join(missing[:10])}, defined nowhere: the browser "
+                "drops every declaration that uses them (colours, backgrounds), so those parts lose their look"
+                + (f"; defined are {', '.join(near[:10])}" if near else "") + ". Define them or use existing ones.",
+                (css,), minor=True))
+
     if not port:
         return
+    if page_url and not any(pp.icon for pp in parsed.values()):
+        st, _, _ = _request(port, "GET", "/favicon.ico")
+        if st != 200:
+            report.problems.append(Problem(
+                "asset_missing", f"browsers ask every site for /favicon.ico; the server answers {st or 'nothing'} and no "
+                "page declares an icon, so every page shows a failed request in the browser console. Add "
+                "<link rel=\"icon\" href=\"...\"> to each page's <head> (an inline SVG data: URL is enough) or let the "
+                "server answer /favicon.ico.", tuple(parsed), minor=True))
     page_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"} if page_url else set()
     default_ports = _source_ports(backend.read_text(encoding="utf-8", errors="replace")) if backend else []
     done: set[tuple[str, str]] = set()

@@ -55,6 +55,14 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("inputs/menu.pdf", msgs[1]["content"])
         self.assertIn("سایت بساز", msgs[1]["content"])
 
+    def test_the_planner_is_told_how_the_parts_must_run_together(self):
+        """Live runs: the planner named `python -m http.server` as the start command of an API (it cannot serve
+        one), and no task wrote down how to start the result."""
+        system = build_planner_messages("x")[0]["content"]
+        self.assertIn("## Integration", system)
+        self.assertIn("cannot serve an API", system)
+        self.assertIn("README.md", system)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,7 @@ from tests.helpers import APP_PY, FINISH, T, T1, T2, OllamaStandIn, call, happy_
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 utf8_console()
+os.environ.setdefault("MC_BROWSER_CHECK", "off")   # the UI is under test here, not the browser check
 
 HOLDER = {"llm": OllamaStandIn(installed=("ornith-1.5:9b",), on_worker=lambda tid, msgs: time.sleep(0.25))}
 PICKER = {"answer": {"status": "error", "message": "tkinter is not available"}}
@@ -341,6 +342,26 @@ with sync_playwright() as p:
     check(pg.evaluate("window.__mc.state.run.resumed") is True, "the retry continued the previous run instead of starting over")
     check(not errs, f"no page errors in the failure flow {errs}")
     pg.screenshot(path=str(SHOTS / "41_retried.png"))
+    ctx.close()
+
+    # ───────────── narrow window (e.g. a side panel): the approval panel must leave the chat box usable
+    reset_server()
+    ctx, pg, errs = open_page(b, "en", size=(565, 1000))
+    pg.wait_for_selector("#start:not([hidden])")
+    pg.fill("#projectPath", TMP + "/narrow"); pg.fill("#prompt", "Build a cafe website")
+    pg.click("#modeSeg button[data-mode='demo']"); pg.click("#speedSeg button[data-speed='4']"); pg.click("#startBtn")
+    pg.wait_for_selector("#gate:not([hidden]) #gateStart")
+    pg.wait_for_timeout(400)
+    free = pg.evaluate("""(() => { const t = document.querySelector('#dockInput'), r = t.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === t; })()""")
+    check(free, "in a narrow window the approval panel leaves the chat box free (live run v5: a message could not be sent)")
+    pg.click("#dockInput"); pg.keyboard.type("Use a warm palette."); pg.keyboard.press("Enter")
+    pg.wait_for_function("(window.__mc.state.chat.get('orchestrator') || []).some(m => m.text === 'Use a warm palette.')",
+                         timeout=10000)
+    check(True, "a message typed while the approval panel is open reaches the lead")
+    pg.screenshot(path=str(SHOTS / "35_narrow_approval.png"))
+    approve(pg)
+    check(not errs, f"no page errors in the narrow window {errs}")
     ctx.close()
 
     # ───────────── D: language switch, Persian layout and text direction

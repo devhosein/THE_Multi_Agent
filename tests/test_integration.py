@@ -48,7 +48,7 @@ if __name__ == "__main__":
     HTTPServer(("127.0.0.1", int(os.environ.get("PORT", "8000"))), H).serve_forever()
 '''
 
-PAGE = """<!doctype html><html><head><link rel="stylesheet" href="{css}"></head>
+PAGE = """<!doctype html><html><head><link rel="stylesheet" href="{css}"><link rel="icon" href="data:,"></head>
 <body><ul id="menu-list"></ul><p id="error" hidden></p>{extra}<script src="app.js"></script></body></html>"""
 
 APP_JS = """const API = "{base}";
@@ -152,6 +152,75 @@ class IntegrationCheck(unittest.TestCase):
         r = self.project(start='raise RuntimeError("menu.json not found")')
         self.assertEqual(self.kinds(r)[0], "server_start")
         self.assertIn("menu.json not found", r.problems[0].message)
+
+    def test_a_page_without_an_icon_makes_the_browser_fail_on_favicon(self):
+        """Live run cafe-35b-v5 lost its "no failed requests" points to the browser's own GET /favicon.ico (404)."""
+        self.project()
+        page = self.root / "index.html"
+        page.write_bytes(page.read_bytes().replace(b'<link rel="icon" href="data:,">', b""))
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["asset_missing"])
+        self.assertIn("/favicon.ico", r.problems[0].message)
+        self.assertEqual(r.problems[0].files, ("index.html",))
+
+    def test_classes_the_stylesheet_does_not_style(self):
+        """Live run cafe-35b-v5: the CSS styled .form-group, the HTML used form-row: the form came out unstyled."""
+        css = ".form-group { margin: 8px; } .form-group input { width: 100%; } .btn { color: #fff; }"
+        extra = '<form><div class="form-row"><input></div><p class="form-success">ok</p><button class="btn">Go</button></form>'
+        r = self.project(extra=extra)
+        (self.root / "style.css").write_bytes(css.encode())
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["style_missing"])
+        msg = r.problems[0].message
+        self.assertIn("form-row, form-success", msg)
+        self.assertIn("styles form-group", msg)                         # the likely intended name, as a hint
+        self.assertNotIn("btn,", msg)
+        self.assertEqual(r.problems[0].files, ("index.html", "style.css"))
+
+    def test_css_variables_used_but_defined_nowhere(self):
+        """Live run cafe-35b-v8: `background: …, var(--coffee-800)` with only 900/700/500/300 defined: the browser
+        dropped the background and the white headings stood on a cream page."""
+        self.project()
+        (self.root / "style.css").write_bytes(b":root { --coffee-700: #4b2e1e; --coffee-900: #3a2317; }\n"
+                                              b".hero { background: var(--coffee-800); color: #fff; }\n"
+                                              b".ok { color: var(--accent, #d98a4b); background: var(--set-by-js); }")
+        (self.root / "app.js").write_bytes((APP_JS.format(base="") +
+                                            'document.body.style.setProperty("--set-by-js", "#fff");').encode())
+        r = check_integration(self.root)
+        self.assertEqual(self.kinds(r), ["style_missing"])
+        p = r.problems[0]
+        self.assertTrue(p.minor)
+        self.assertIn("--coffee-800, defined nowhere", p.message)
+        self.assertIn("defined are --coffee-700, --coffee-900", p.message)
+        self.assertNotIn("--accent", p.message)                              # it has a fallback
+        self.assertEqual(p.files, ("style.css",))
+
+    def test_classes_used_by_scripts_or_styled_in_the_page_are_fine(self):
+        extra = ('<style>.hero { padding: 2rem; }</style><section class="hero js-reveal">'
+                 '<p class="is-open"></p></section>')
+        js = APP_JS.format(base="") + 'document.querySelectorAll(".js-reveal").forEach(n => n.classList.add("is-open"));'
+        r = self.project(extra=extra, js=js)
+        self.assertEqual(r.problems, [], [p.message for p in r.problems])
+
+    def test_pages_served_under_other_names_are_found_through_their_links(self):
+        """Live run cafe-35b-v5: frontend/menu.html was served at /menu; GET /menu.html was a 404. Taken for
+        /frontend/menu.html instead, the page's relative assets were looked up in the wrong place."""
+        server = SERVER.format(pages=True, cors=False, start="pass").replace(
+            'ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))',
+            'ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")').replace(
+            'p = os.path.join(ROOT, (self.path.strip("/") or "index.html"))',
+            'p = os.path.join(ROOT, {"/": "index.html", "/menu": "menu.html", "/style.css": "style.css", '
+            '"/app.js": "app.js"}.get(self.path, "-"))')                  # no /index.html, no /menu.html
+        (self.root / "backend" / "server.py").write_bytes(textwrap.dedent(server).encode())
+        site = self.root / "frontend"
+        site.mkdir()
+        (site / "index.html").write_bytes(PAGE.format(css="style.css", extra='<a href="/menu">Menu</a>').encode())
+        (site / "menu.html").write_bytes(PAGE.format(css="style.css", extra="<h1>Menu</h1>").encode())
+        (site / "style.css").write_bytes(b"body { color: #4a2c1a; }")
+        (site / "app.js").write_bytes(APP_JS.format(base="").encode())
+        r = check_integration(self.root)
+        self.assertEqual(r.served_by, "backend")
+        self.assertEqual(r.problems, [], [p.message for p in r.problems])
 
     # ---------------------------------------------------------------- scope
     def test_pages_in_a_nested_folder_served_from_the_root_are_found(self):

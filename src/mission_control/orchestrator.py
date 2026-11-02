@@ -56,12 +56,25 @@ WORKER_EXAMPLE = """Example of a good sequence of calls (adapt it to your task):
 7. finish {"summary": "Built the server with the two endpoints from the contract."}"""
 
 
-def build_worker_system(task: Task, plan: Plan, ws: Workspace, decisions: str, profile: Profile | None = None) -> str:
+def _team(task: Task, plan: Plan, statuses: Mapping[str, str]) -> str:
+    """Who builds what, and when. Shown only the other tasks' titles, a backend agent built the pages itself inside
+    backend/ (live run cafe-35b-v4): it did not know that a frontend agent would build them after it."""
+    out = []
+    for t in plan.tasks:
+        if t.id == task.id:
+            continue
+        st = statuses.get(t.id, "pending")
+        when = {"done": "finished", "verified": "finished", "running": "working now",
+                "pending": "starts after you"}.get(st, st)
+        out.append(f"- {t.id} [{t.role}] {t.title} - builds {', '.join(t.owns) or '(nothing, read-only)'} - {when}")
+    return "\n".join(out) or "(none)"
+
+
+def build_worker_system(task: Task, plan: Plan, ws: Workspace, decisions: str, profile: Profile | None = None,
+                        statuses: Mapping[str, str] | None = None) -> str:
     p = profile or PROFILES["medium"]
     owns = ", ".join(task.owns) if task.owns else "NOTHING (this task is read-only; do not call write_file)"
-    others = "\n".join(
-        f"- {t.id} [{t.role}] {t.title}" + (f" (after {', '.join(t.depends_on)})" if t.depends_on else "")
-        for t in plan.tasks if t.id != task.id) or "(none)"
+    others = _team(task, plan, statuses or {})
     contracts = contracts_text(ws)
     inputs = sorted(q.name for q in ws.inputs_dir.glob("*")) if ws.inputs_dir.exists() else []
     return f"""You are the "{task.role}" agent on a software team. Work ONLY on your own task. You can do this well.
@@ -89,8 +102,11 @@ Rules:
    backend must serve your pages / allow your requests), call note_to_lead AT ONCE with the exact change, like telling
    your project manager. The lead answers within a step or two; meanwhile continue with your own files. Never work
    around it and never assume the other side will "probably" match.
-7. Use relative paths from the project root, with forward slashes.
-8. As soon as every acceptance criterion is met, call finish with a short summary. Do not keep polishing.
+7. The other agents' files (see "The team" below) are built by them, also when they do not exist yet because that
+   agent starts after you. Never create them yourself, not even a copy or a stand-in inside your own folder (for
+   example pages inside backend/): build your side so that it works with theirs as the contract describes.
+8. Use relative paths from the project root, with forward slashes.
+9. As soon as every acceptance criterion is met, call finish with a short summary. Do not keep polishing.
 {chr(10) + WORKER_EXAMPLE + chr(10) if p.detailed else ''}
 Files in the project now:
 {project_tree(ws)}
@@ -102,7 +118,7 @@ Shared contracts (written by earlier tasks):
 Decisions made so far (follow them):
 {decisions.strip() or '(none yet)'}
 
-Other tasks in the plan (context only, do not do their work):
+The team (who builds what; do not do their work):
 {others}"""
 
 
@@ -245,9 +261,15 @@ def answer_user(llm: LLMClient, context: list[dict[str, Any]], text: str) -> Ans
     (which changes the work and goes into the decision ledger) apart from a question (which only needs an answer)."""
     ask = (f"The user has just sent you this message while you work:\n\"{text}\"\n\n"
            "Reply to them now, directly, in the language they wrote in, in 1-3 short sentences: answer the question or say "
-           "what you will do. Then decide whether the message is an instruction that changes the work (true) or only a "
-           "question or comment (false). If it is an instruction, restate it in one clear sentence in \"instruction\"; "
-           "otherwise use \"\". Answer only with JSON: {\"reply\": \"...\", \"is_instruction\": true, \"instruction\": \"...\"}")
+           "what you will do. Then classify the message. It is an instruction (true) when the user tells the team what to "
+           "do or how the result must be: a requirement, preference, constraint or change (colors, wording, a feature, a "
+           "port, a rule), EVEN IF it already fits the current plan. Your team only learns it from the decision you "
+           "record, so when in doubt, it is an instruction. It is not an instruction (false) only when it is a question, "
+           "thanks, or a remark that asks for nothing. If it is an instruction, restate it in one clear sentence in "
+           "\"instruction\"; otherwise use \"\". "
+           "Answer only with JSON: {\"reply\": \"...\", \"is_instruction\": true, \"instruction\": \"...\"}")
+    # "an instruction that changes the work" was read as "changes the plan": twice in live runs the lead answered
+    # "I'll fold this into the frontend build" and recorded nothing, so no agent heard of it.
     msgs = [dict(m) for m in context] + [{"role": "user", "content": ask}]
 
     def validate(obj: Any) -> list[str]:
@@ -260,7 +282,12 @@ def answer_user(llm: LLMClient, context: list[dict[str, Any]], text: str) -> Ans
     except (StructuredOutputError, LLMError):
         return Answer("", text, failed=True)   # could not answer: treat the message as an instruction, never drop it
     v = res.value
-    instruction = str(v.get("instruction", "")).strip() if v.get("is_instruction") else ""
+    # Either signal makes it an instruction: losing one costs far more than an extra line in the ledger. Live run
+    # cafe-35b-v5: "Use a warm color palette ..." got the reply "I'll fold this into the frontend build" and no
+    # decision, so no agent would have seen it (three repeats of the same call classified it correctly). Ollama
+    # writes the keys in alphabetical order, so the restatement comes BEFORE is_instruction: it is the first signal.
+    restated = str(v.get("instruction", "")).strip()
+    instruction = restated or (text.strip() if v.get("is_instruction") else "")
     return Answer(str(v["reply"]).strip(), instruction or None, res.tokens_in, res.tokens_out)
 
 

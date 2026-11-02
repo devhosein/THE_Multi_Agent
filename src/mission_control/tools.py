@@ -6,10 +6,13 @@ of the call - never merely requested in the prompt, because a small model will s
   * paths go through the project jail (`resolve_inside`): no `../`, no absolute paths, no `.mission/`
   * a task may write only inside its `owns` patterns (`path_allowed`)
   * every failure is returned to the model as an `ERROR: ...` string so it can correct itself
+  * the short note that replaces written content in the history (worker.compact) is never written INTO a file: models
+    imitate their own history, and live runs v4 and v7 overwrote server.py / appended to style.css with that note
 """
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Iterable
 
@@ -23,6 +26,12 @@ MAX_READ_BYTES = 30_000
 MAX_LIST_ENTRIES = 300
 CHUNK_CHARS = 48
 SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "venv"}
+# what worker.compact says about a write it removed from the history (in the tool result), and older notes of that kind
+REMOVED_NOTE = "characters of content were removed from this conversation to save space; read_file shows the file."
+PLACEHOLDER_RE = re.compile(r"<<\d+ characters written to [^<>]*>>|\d+ " + re.escape(REMOVED_NOTE[:60]))
+PLACEHOLDER_ERROR = ("ERROR: this is not file content: it is the short note that replaced one of your earlier writes in "
+                     "the conversation (to save space). Nothing was written. Write the real content; read_file shows "
+                     "what the file contains now.")
 
 TOOL_SPECS: list[dict[str, Any]] = [
     {"type": "function", "function": {
@@ -171,7 +180,10 @@ class ToolBox:
         if not isinstance(raw, str) or not raw.strip():
             return "ERROR: path is required"
         if not isinstance(content, str):
-            return "ERROR: content must be a string with the COMPLETE file content"
+            return ("ERROR: content is missing: write_file needs the COMPLETE file content. (Earlier calls in this "
+                    "conversation show no content only because it was removed to save space.)")
+        if PLACEHOLDER_RE.search(content):
+            return PLACEHOLDER_ERROR
         try:
             target = resolve_inside(self.ws.root, raw)
         except PathEscapeError as e:
@@ -206,7 +218,10 @@ class ToolBox:
         if not isinstance(raw, str) or not raw.strip():
             return "ERROR: path is required"
         if not isinstance(content, str) or not content:
-            return "ERROR: content must be a non-empty string"
+            return ("ERROR: content is missing: append_file needs the text to add. (Earlier calls in this "
+                    "conversation show no content only because it was removed to save space.)")
+        if PLACEHOLDER_RE.search(content):
+            return PLACEHOLDER_ERROR
         try:
             target = resolve_inside(self.ws.root, raw)
         except PathEscapeError as e:

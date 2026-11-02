@@ -18,6 +18,12 @@ from typing import Any, Callable, Iterator, Protocol
 
 DEFAULT_MODEL = "ornith-1.5:9b"
 DEFAULT_HOST = "http://localhost:11434"
+# Upper bound on the tokens ONE answer may generate (thinking included). Not a work budget: in all live runs the
+# largest healthy answer was 28,957 tokens (35B, ~170 s), while a runaway answer (thinking that never ends) ran into
+# the 600 s timeout and was thrown away; the same call then took seconds. With the cap a runaway ends after ~3 min
+# as an answer "cut off" (done_reason "length") that the worker knows how to handle. Unlike num_ctx this changes
+# nothing about how Ollama loads the model.
+MAX_OUTPUT_TOKENS = 32_768
 
 
 class LLMError(RuntimeError):
@@ -90,6 +96,7 @@ class OllamaClient:
         timeout: float = 600.0,
         num_ctx: int | None = None,
         think: bool | None = None,
+        num_predict: int | None = MAX_OUTPUT_TOKENS,
     ) -> None:
         host = host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST
         if not host.startswith(("http://", "https://")):
@@ -99,6 +106,7 @@ class OllamaClient:
         self.timeout = timeout
         self.num_ctx = num_ctx
         self.think = think
+        self.num_predict = num_predict
 
     # ---------------------------------------------------------------- plumbing
     def _payload(self, messages, *, schema, tools, temperature, stream) -> dict[str, Any]:
@@ -112,6 +120,8 @@ class OllamaClient:
             options["temperature"] = temperature
         if self.num_ctx:
             options["num_ctx"] = self.num_ctx
+        if self.num_predict:
+            options["num_predict"] = self.num_predict
         if options:
             payload["options"] = options
         if self.think is not None:

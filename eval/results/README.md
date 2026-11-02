@@ -49,6 +49,60 @@ Each run exposed the next weak point; each fix has a test that fails without it.
 | v3 | Agents used `check_project` before finishing; the site was same-origin and "fit together". QA found a bug the stdlib check cannot see (`app.js` looked up `#menu-list`, the page had `#menu-container`, guarded by `if`) and told the lead at once; the lead added a frontend fix task. Deadlock: tasks run one after another, the fix waited for QA, QA kept reporting "not fixed". Stopped. | A running agent whose report made the lead add work steps aside (paused, back in the queue behind the fix) and is told what changed when it resumes. |
 | v4 | The backend agent reported contract conflicts at once; the lead recorded a decision and added a contract fix *after* the backend (correctly not pausing it: that would be a cycle). Then the backend agent built pages inside `backend/frontend/`; the check looked for them only one folder up and reported false problems, which confused it into a loop. The 35B model also had three model calls of more than 10 minutes (timeouts, retried). Stopped. | The check tries every path suffix to find pages served from a nested folder. Open: very long thinking of the 35B model; an agent doing another agent's work inside its own folder. |
 
+### 2026-11-02 — v5 to v9: the parts fit, then the browser check
+
+Same prompt, same model, same procedure; the palette line sent in the chat during approval. Design (Q4) scored by
+the reviewer from the screenshots, as before.
+
+| | v5 (`multi-agent-v0.3`) | v6 (`multi-agent-v0.4`) | v7 (`multi-agent-v0.5`) | v8 (`multi-agent-v0.6`) | v9 (`multi-agent-v0.7`) | single agent |
+|---|---|---|---|---|---|---|
+| F1–F3 backend, API, landing (30) | 30 | 30 | 30 | 30 | 25 (no story) | 30 |
+| F4 menu in the browser (15) | 15 (12/12) | **0** (0/11) | 15 (8/8) | 15 (17/17) | 15 (10/10) | 15 |
+| F5 booking stored + confirmed (15) | 15 | 8 (no confirmation) | 15 | 15 | 15 | 15 |
+| F6 invalid booking rejected (5) | 5 | 5 | 5 | 5 | 5 | 5 |
+| F7 no JS errors / failed requests (5) | 0 (`/favicon.ico` 404) | 0 (ReferenceError) | **5** | **5** | **5** | 0 |
+| Q1 / Q2 / Q3 (15) | 5 / 0 / 5 | 5 / 0 / 5 | 5 / 0 / 5 | 5 / 0 / 5 | 5 / 0 / 5 | 5 / 0 / 5 |
+| Q4 design (15) | 10 | not reviewed | 11 | 7 | 13 | 10 |
+| **Total (100)** | **85** | **≤ 68** | **91** | **87** | **88** | **85** |
+| time (approval → done) | 4.5 min | 5.5 min | 15.5 min | 13.5 min | 7 min | 3.9 min |
+
+- **v5** — first run with each agent seeing who builds what (the backend agent said so and left the pages to the
+  frontend agent), a capped output (no runaway answers) and a fixed approval panel. Everything worked; it tied the
+  single agent. Lost points: the reservation form was unstyled (the CSS styled `.form-group`, the HTML used `form-row`,
+  same agent: compaction had dropped its own CSS from its history) and the browser's `/favicon.ico` request failed.
+  Design 10: excellent landing page, unstyled form, label/value text glued together in the confirmation.
+- **v6** — the stdlib integration check passed and the QA agent "verified" by reading code, but the menu page was
+  empty (the server wrapped the menu twice) and the form threw `ReferenceError` on submit. Not visible without running
+  the JavaScript. (Also: the lead twice failed to record the palette instruction in aborted attempts, fixed first.)
+- **v7** — with the browser check the frontend agent saw 12 problems, then 4, then none, fixing each (including a
+  confirmation that was hidden by CSS). Zero JS errors, every functional point. Design 11: polished typography, a
+  beautiful reservation form and confirmation; but "Loading menu…" stays visible after loading, name and price run
+  together, unstyled selects, and abstract placeholder shapes instead of imagery. Slower: the frontend agent spent
+  ~12 minutes on fixes, and four rewrites of a 1,200-line stylesheet were caused by the compaction-note bug (now fixed).
+
+- **v8** — every functional point again (17/17 items, booking confirmed, no errors). Two new failures, both found
+  and fixed after the run: (1) the frontend agent kept writing the compaction note as file content; the new guard
+  refused every attempt, but the agent looped on it (two failed attempts, then the lead's rescue worked); fix: the
+  history no longer shows a note inside the call at all (only the path; the note is in the tool result). (2) Design 7:
+  white headings and footer text on a cream page on every page, because the dark backgrounds used `var(--coffee-800)`,
+  which was never defined; fix: the stdlib check reports undefined CSS variables and the browser check reports text
+  whose colour (almost) equals the colour behind it. Otherwise good: a clean menu list, a well-made form.
+
+- **v9** — the imitation loop is gone (one call without content, refused with the explanation, then the agent went
+  on); 7 minutes. Every page works with no errors; the cleanest design so far (13: consistent cards, a three-column
+  menu with filters, a confirmation with the booking details; the feature cards touch the window edges). But the
+  landing page has no story, only a tagline and feature cards: a requirement nobody checked (the checks test that
+  things work, not that every requested piece of content is there).
+
+**Since the browser check (v7–v9): 91, 87, 88** — every run above the single agent's 85, with every functional point
+and no JavaScript errors. The remaining gap is quality and time, not integration: no tests (Q2), requested content
+not verified, and 7–15 minutes against 4.
+
+**Caveats, honestly:** one run per version, and runs vary a lot (v5 85, v6 ≤ 68, v7 91): a claim needs several runs
+(phase 7). The engine's browser check now works like this scorer (load the pages, use the form), so this task no
+longer measures independently what the engine checks: new tasks the engine was not developed against are needed to
+show the gain is general. The single agent got no browser check; giving it one would be the fair next comparison.
+
 ### What to build from it
 1. Real verification (phase 6): run the project the way this scorer does (start the server, load the pages, read the
    console) and send failures back to the responsible agent. The scorer is a ready prototype of that verifier.

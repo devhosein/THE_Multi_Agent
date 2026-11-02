@@ -69,6 +69,23 @@ class EngineIntegration(unittest.TestCase):
         self.assertFalse([e for e in evs if e.type == EV.PLAN_UPDATED], "no fix task for a problem the agent can fix")
         assert_valid(self, evs)
 
+    def test_a_cosmetic_problem_is_sent_back_once_but_never_fails_the_task_or_the_run(self):
+        """Live run cafe-35b-v5: the HTML used form-row, the CSS styled .form-group. The agent hears about it; if it
+        cannot fix it, the site still works, so the task and the run pass with a warning."""
+        unstyled = PAGE.format(css="style.css", extra='<div class="form-row"><p class="form-note">x</p></div>')
+        llm = ScriptedLLM(plan=PLAN, workers={
+            "t1": [backend(pages=True), FINISH],
+            "t2": [*frontend(), call("write_file", path="index.html", content=unstyled), FINISH, FINISH]})
+        s, evs = run_engine(llm, review=False, integration=True)
+        retry = llm.kinds("worker", "t2")[-1][2][1]["content"]
+        self.assertIn("form-note, form-row", retry)                                    # told once, with the names
+        self.assertEqual(s._status, {"t1": "verified", "t2": "verified"})
+        fin = [e for e in evs if e.type == EV.RUN_FINISHED][0]
+        self.assertEqual(fin.data["status"], "completed", fin.data)
+        self.assertTrue(any("accepted with 1 minor problem(s) left" in e.data["message"] for e in evs if e.type == EV.LOG))
+        self.assertFalse([e for e in evs if e.type == EV.PLAN_UPDATED], "no fix task for a cosmetic problem")
+        assert_valid(self, evs)
+
     def test_problems_that_remain_make_the_run_fail_honestly(self):
         llm = ScriptedLLM(plan=PLAN, workers={
             "t1": [backend(pages=False), FINISH],

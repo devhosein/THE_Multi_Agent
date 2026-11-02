@@ -7,9 +7,12 @@ Every defence below comes from a failure seen in a real run (see docs/FAILURES.m
     (write_file + append_file), call again
   * the same call over and over (a model rewrote test.sh 14 times) -> warn on the 3rd repeat, stop on the 5th with a
     clear diagnosis; there is no small fixed step budget any more, only a high safety cap
+  * an answer that never ends (thinking, no action; 600 s timeouts) -> the client caps the output; the cut-off
+    answer is dropped and the agent is told to stop deliberating and make its next tool call
   * a history that grows with every file written or read             -> compaction: written content and old reads
-    are replaced by short notes (the files are on disk; the model can read them again)
-  * a user message                                                   -> the agent answers it at its next step,
+    are replaced by short notes (the files are on disk; the model can read them again). A note keeps the names other
+    files must match (classes, ids): without them an agent styled .form-group and then wrote form-row in the HTML
+  * a user message                                                  -> the agent answers it at its next step,
     then carries on with the message taken into account
 """
 from __future__ import annotations
@@ -21,11 +24,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .integration import ID_LOOKUP_RE, css_classes
 from .llm import ChatResult, LLMClient, LLMError, classify_llm_error
-from .tools import TOOL_SPECS, ToolBox
+from .tools import REMOVED_NOTE, TOOL_SPECS, ToolBox
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 WRITE_TOOLS = ("write_file", "append_file")
+_HTML_ATTR = re.compile(r"""\b(id|class)\s*=\s*["']([^"'<>{}$]+)["']""")
+_JS_CLASS = re.compile(r"""(?:classList\.(?:add|remove|toggle|contains)\(\s*|className\s*=\s*)['"]([\w\s-]+)['"]|"""
+                       r"""querySelector(?:All)?\(\s*['"]\.([\w-]+)""")
 
 LogFn = Callable[..., None]   # log(level, source, message, detail=None)
 
@@ -94,10 +101,39 @@ def call_model(llm: LLMClient, messages: list[dict[str, Any]], *, tools=None, sc
     raise AssertionError("unreachable")
 
 
+def interface(path: str, content: str, limit: int = 60) -> str:
+    """The names in a file that OTHER files must match: classes a stylesheet styles, ids and classes a page has, ids
+    and classes a script uses. Kept in the history when the content itself is dropped."""
+    ext = path.rsplit(".", 1)[-1].lower()
+    parts: list[tuple[str, set[str]]] = []
+    if ext == "css":
+        parts.append(("styles the classes", css_classes(content)))
+    elif ext in ("html", "htm"):
+        ids: set[str] = set()
+        classes: set[str] = set()
+        for kind, value in _HTML_ATTR.findall(content):
+            if kind == "id":
+                ids.add(value.strip())
+            else:
+                classes.update(value.split())
+        parts += [("has the ids", ids), ("uses the classes", classes)]
+    elif ext in ("js", "mjs"):
+        parts += [("looks up the ids", {m.group(2) or m.group(4) for m in ID_LOOKUP_RE.finditer(content)}),
+                  ("uses the classes", {c for m in _JS_CLASS.finditer(content) for c in (m.group(1) or m.group(2)).split()})]
+    shown = []
+    for label, names in parts:
+        if names:
+            ordered = sorted(names)
+            shown.append(f"{label}: {', '.join(ordered[:limit])}" + (" …" if len(ordered) > limit else ""))
+    return "; ".join(shown)
+
+
 def compact(messages: list[dict[str, Any]], *, aggressive: bool = False) -> int:
     """Shrink the conversation in place; returns the number of characters saved.
 
-    - content already written to disk is replaced by a note (in every assistant tool call but the newest)
+    - content already written to disk leaves the history (in every assistant tool call but the newest): the call keeps
+      only its path, and the TOOL RESULT says what was removed and which names the file defines. The note is not put
+      in the call itself: models imitate their own calls, and live runs v4/v7/v8 wrote such a note as file content
     - only the newest file reads stay complete; older ones are shortened
     - aggressive mode (after a cut-off answer) also shortens old assistant prose"""
     saved = 0
@@ -106,16 +142,23 @@ def compact(messages: list[dict[str, Any]], *, aggressive: bool = False) -> int:
     for i in assistants:
         m = messages[i]
         if i != newest_assistant or aggressive:
+            results = [j for j in range(i + 1, len(messages)) if messages[j].get("role") == "tool"]
+            nxt = next((a for a in assistants if a > i), len(messages))
+            results = [j for j in results if j < nxt]               # this call's results, in the order of the calls
             calls = []
-            for c in m.get("tool_calls") or []:
+            for k, c in enumerate(m.get("tool_calls") or []):
                 fn = c.get("function", c) if isinstance(c, dict) else {}
                 args = parse_arguments(fn.get("arguments")) if isinstance(fn, dict) else None
                 if isinstance(fn, dict) and fn.get("name") in WRITE_TOOLS and isinstance(args, dict) \
-                        and isinstance(args.get("content"), str) and not args["content"].startswith("<<"):
+                        and isinstance(args.get("content"), str):
                     n = len(args["content"])
                     saved += n
-                    args = {**args, "content": f"<<{n} characters written to {args.get('path')}; read_file shows the file>>"}
-                    c = {**c, "function": {**fn, "arguments": args}}
+                    names = interface(str(args.get("path", "")), args["content"])
+                    c = {**c, "function": {**fn, "arguments": {k2: v for k2, v in args.items() if k2 != "content"}}}
+                    if k < len(results):
+                        r = messages[results[k]]
+                        r["content"] = (r.get("content") or "") + f"\n[{n} {REMOVED_NOTE}" \
+                            + (f" It {names}." if names else "") + "]"
                 calls.append(c)
             if calls:
                 m["tool_calls"] = calls
@@ -144,6 +187,10 @@ def _describe(name: str, args: Any) -> str:
 TRUNCATION_HINT = ("Your last answer was cut off before it finished (the tool call was too long). Keep each tool call "
                    "smaller: write a long file in parts - write_file with the first part (about 150 lines), then append_file "
                    "for each next part. Keep your explanations short. Continue now.")
+
+RUNAWAY_HINT = ("Your last answer ran out of room while you were still thinking, before you made any tool call. Do not "
+                "think everything through again: decide the single next step and make that tool call now. Keep your "
+                "reasoning short.")
 
 
 def run_worker(
@@ -214,8 +261,11 @@ def run_worker(
             if res.done_reason == "length" and truncations < lim.truncation_retries:
                 truncations += 1
                 compact(messages, aggressive=True)
-                log("warn", "worker", "The model ran out of room before calling a tool; asking for shorter steps")
-                messages.append({"role": "user", "content": TRUNCATION_HINT})
+                runaway = len(text) < 2000            # (almost) all of it was thinking: it never got to act
+                log("warn", "worker", "The model " + ("thought until it ran out of room without acting; asking it to act now"
+                    if runaway else "ran out of room before calling a tool; asking for shorter steps"),
+                    f"{res.tokens_out} tokens generated")
+                messages.append({"role": "user", "content": RUNAWAY_HINT if runaway else TRUNCATION_HINT})
                 continue
             if toolbox.finished is not None or toolbox.written:   # it worked and just forgot to say "finish"
                 return WorkerResult(True, summary=toolbox.finished or text or "(no summary given)", steps=step)
