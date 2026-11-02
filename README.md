@@ -11,6 +11,34 @@ then watch the work happen: tasks run in dependency order, every result is check
 by the lead, the plan is revised while the run is in progress, and every agent answers your messages at any moment.
 Runs on local models through [Ollama](https://ollama.com).
 
+## Results
+
+![Results at a glance](docs/img/results-headline.svg)
+
+The same local model (`ornith-1.5:35b`, one GPU), the same prompts, scored by a **real browser** that uses the site
+like a person: open the pages, read the menu, book a table, add / complete / delete a task (`eval/`, rubric written
+before the runs). What took Mission Control from **40 to 80 out of 85** is a verification layer that runs the
+project after every task and sends what is broken back to the agent that owns it — and every step of that climb
+comes from a failure seen in a live run ([`docs/FAILURES.md`](docs/FAILURES.md), 22 of them).
+
+![The operations room during a live run](docs/img/operations-room.png)
+
+![Mission Control version by version](docs/img/results-versions.svg)
+
+![Three set-ups on the same model](docs/img/results-systems.svg)
+
+**What the verification layer checks**, with the standard library only: it starts the backend, loads every page,
+follows every link, fetches every script, stylesheet and image, calls every API the pages call, checks CORS, element
+ids, CSS classes and variables, and that data files and API answers agree. With Playwright installed it also uses the
+pages in a real browser: JavaScript errors, data that never reaches the page, forms that do nothing, unreadable text.
+
+**What we learned, honestly.** Give a *single* agent the same checks and it does almost as well on these small apps
+(71 vs 74): the gain comes from verification, not from the number of agents, and Mission Control is slower (minutes
+per run: about 12 vs 9 vs 3). Multi-agent pays off for large or parallel work, for a reviewer that did not write
+the code, and for mixing a strong lead with cheap local workers — the next things to measure. Each number is a small
+sample (6–7 runs per set-up over two tasks); every run, every caveat and the excluded runs are in
+[`eval/results/README.md`](eval/results/README.md).
+
 | Start | Review the team, pick models | Two agents at work (demo) |
 |---|---|---|
 | ![](docs/screenshots/1-start.png) | ![](docs/screenshots/5-approval.png) | ![](docs/screenshots/2-room.png) |
@@ -58,9 +86,9 @@ prompt ─► plan (validated DAG) ─► one agent per task ─► your go-ahea
 
 | command | covers | count |
 |---|---|---|
-| `python -m unittest discover -s tests -t .` | engine (scripted model), engine over the real Ollama HTTP protocol, tools sandbox, server, SSE, security, paths, report, translations, scripts, repo hygiene | 249 |
+| `python -m unittest discover -s tests -t .` | engine (scripted model), engine over the real Ollama HTTP protocol, tools sandbox, server, SSE, security, paths, report, translations, scripts, repo hygiene | 305 |
 | `node --test tests/ui_state.test.mjs` | the UI's event reducer | 16 |
-| `python tests/e2e_ui.py` | real browser (`pip install playwright && playwright install chromium`; or `--browser msedge` to use an installed Edge): layouts in both languages, live run, approval, replan, failure decision, logs, report, retry, Persian text in code | 120 checks |
+| `python tests/e2e_ui.py` | real browser (`pip install playwright && playwright install chromium`; or `--browser msedge` to use an installed Edge): layouts in both languages, live run, approval, replan, failure decision, logs, report, retry, Persian text in code | 124 checks |
 
 Critical logic is mutation-tested (bugs injected on purpose must make a test fail). CI runs the unit and reducer
 tests on Ubuntu and Windows (Python 3.11 and 3.13) and the browser checks on Ubuntu, on every push.
@@ -69,4 +97,5 @@ tests on Ubuntu and Windows (Python 3.11 and 3.13) and the browser checks on Ubu
 - `CLAUDE.md` — working notes for continuing in Claude Code (commands, architecture, rules).
 - `docs/HANDOFF.md` — the complete story: vision, research, roadmap and status, architecture, testing, limits, next steps.
 - `docs/FAILURES.md` — failures seen in real runs and how the engine handles them.
+- `eval/` — the benchmark: tasks and rubrics, browser-based scorers, the runner, every scored run.
 - `docs/EVENTS.md` — the event contract.

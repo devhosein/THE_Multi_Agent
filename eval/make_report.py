@@ -1,33 +1,56 @@
 #!/usr/bin/env python3
-"""Turn eval/results/bench/runs.jsonl into the charts and gallery shown in the README.
+"""The charts in the README, computed from the scored runs in eval/results (nothing typed in by hand).
 
-    python eval/make_report.py            # writes eval/results/bench/*.svg, gallery_*.png and summary.md
+    python eval/make_report.py        # writes docs/img/results-*.svg and prints the numbers behind them
 
-Charts are hand-written SVG (no plotting library): a fixed light card, so they read the same in GitHub's light and dark
-themes. Colours: the validated categorical slots 1-3 (blue, orange, aqua), always in the same order per system;
-every value is also written as text, so nothing depends on colour alone."""
+Which runs count (all ornith-1.5:35b, same machine, same prompts, scored by eval/score_site.py or score_taskboard.py):
+  * Mission Control on the cafe, version by version: eval/results/multi-agent-v0.2 … v0.7, then the benchmark run
+  * the three systems: every run made with the browser check in place —
+      single agent        bench (4) + single-agent-v0.2 + bench-pilot cafe-solo-1          (the same code throughout)
+      single agent+checks bench (2) + bench-pilot3 (4)   (checks from 8b60c01 on; ff38b84 fixed three check bugs)
+      Mission Control     bench (1) + bench-pilot3 (3) + multi-agent-v0.5 … v0.7
+    Left out, on purpose: runs broken by a bug in the check itself (bench-pilot2: the agent hard-coded the check's
+    temporary port; bench-pilot: before the link check), and Mission Control before the browser check (v0.2–v0.4,
+    shown in the version chart instead).
+Hand-written SVG on a light card, so the charts read the same in GitHub's light and dark themes; colours are the
+validated categorical slots (blue, orange, aqua), and every number is also written as text."""
 import json
 import statistics
-import sys
 from html import escape
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BENCH = ROOT / "eval" / "results" / "bench"
-SYSTEMS = [("mc", "Mission Control", "#2a78d6"), ("solo-check", "Single agent + our checks", "#eb6834"),
-           ("solo", "Single agent", "#1baf7a")]
-TASKS = [("cafe", "Cafe website"), ("taskboard", "Task board")]
-CRITERIA = [("F1", "Backend starts, stdlib only", 10), ("F2", "API answers with JSON", 10),
-            ("F3", "Page loads (story & hours / form)", 10), ("F4", "Core feature works in the browser", 15),
-            ("F5", "Second feature works in the browser", 15), ("F6", "Invalid input rejected", 5),
-            ("F7", "No JS errors, no failed requests", 5), ("Q1", "No sideways scroll on a phone", 5),
-            ("Q2", "Its own tests pass", 5), ("Q3", "Says how to run it", 5)]
+RES = ROOT / "eval" / "results"
+OUT = ROOT / "docs" / "img"
 FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
 INK, INK2, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1", "#fcfcfb"
+BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 
 
-def load() -> list[dict]:
-    return [json.loads(line) for line in (BENCH / "runs.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+def score(label: str) -> dict:
+    d = json.loads((RES / label / "score.json").read_text(encoding="utf-8"))
+    return {"automatic": d["automatic_total"], "points": d["points"]}
+
+
+def rows(folder: str) -> list[dict]:
+    p = RES / folder / "runs.jsonl"
+    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()] if p.exists() else []
+
+
+def systems() -> dict[str, list[dict]]:
+    bench, pilot, pilot3 = rows("bench"), rows("bench-pilot"), rows("bench-pilot3")
+    solo = [r for r in bench if r["system"] == "solo"] + [score("single-agent-v0.2")] + \
+           [r for r in pilot if r["system"] == "solo"]
+    check = [r for r in bench + pilot3 if r["system"] == "solo-check"]
+    mc = [r for r in bench + pilot3 if r["system"] == "mc"] + [score(f"multi-agent-v0.{i}") for i in (5, 6, 7)]
+    return {"solo": solo, "check": check, "mc": mc}
+
+
+def stats(rs: list[dict]) -> dict:
+    a = [r["automatic"] for r in rs]
+    works = sum(1 for r in rs if r["points"].get("F4") == 15 and r["points"].get("F5") == 15)
+    clean = sum(1 for r in rs if r["points"].get("F7") == 5)
+    return {"n": len(a), "mean": statistics.mean(a), "min": min(a), "max": max(a), "works": works, "clean": clean}
 
 
 def card(w: int, h: int, body: str, title: str, subtitle: str) -> str:
@@ -38,223 +61,113 @@ def card(w: int, h: int, body: str, title: str, subtitle: str) -> str:
             f'<text x="28" y="63" font-size="13" fill="{INK2}">{escape(subtitle)}</text>{body}</svg>')
 
 
-def legend(x: int, y: int) -> str:
-    out, cx = [], x
-    for _, name, color in SYSTEMS:
-        out.append(f'<rect x="{cx}" y="{y - 10}" width="12" height="12" rx="3" fill="{color}"/>'
-                   f'<text x="{cx + 18}" y="{y}" font-size="13" fill="{INK2}">{escape(name)}</text>')
-        cx += 30 + len(name) * 7
-    return "".join(out)
-
-
-def column(x: float, y_base: float, w: float, h: float, color: str) -> str:
+def column(x: float, base: float, w: float, h: float, color: str) -> str:
     """A column with a 4px rounded data-end and a square base."""
     r = min(4, h)
-    return (f'<path d="M{x},{y_base} V{y_base - h + r} Q{x},{y_base - h} {x + r},{y_base - h} H{x + w - r} '
-            f'Q{x + w},{y_base - h} {x + w},{y_base - h + r} V{y_base} Z" fill="{color}"/>')
+    return (f'<path d="M{x},{base} V{base - h + r} Q{x},{base - h} {x + r},{base - h} H{x + w - r} '
+            f'Q{x + w},{base - h} {x + w},{base - h + r} V{base} Z" fill="{color}"/>')
 
 
-def score_chart(rows: list[dict]) -> str:
-    w, h, top, bottom, left = 760, 430, 120, 360, 64
-    ymax = 85
-    sy = lambda v: bottom - v / ymax * (bottom - top)                                   # noqa: E731
-    body = [legend(28, 95)]
-    for v in (0, 20, 40, 60, 80):
-        body.append(f'<line x1="{left}" x2="{w - 28}" y1="{sy(v)}" y2="{sy(v)}" stroke="{GRID}"/>'
-                    f'<text x="{left - 10}" y="{sy(v) + 4}" font-size="12" fill="{MUTED}" text-anchor="end">{v}</text>')
-    body.append(f'<line x1="{left}" x2="{w - 28}" y1="{sy(85)}" y2="{sy(85)}" stroke="{MUTED}" stroke-dasharray="0"/>'
-                f'<text x="{w - 28}" y="{sy(85) - 6}" font-size="11" fill="{MUTED}" text-anchor="end">max 85</text>')
-    group_w = (w - 28 - left) / len(TASKS)
-    bw, gap = 24, 22
-    for gi, (task, tname) in enumerate(TASKS):
-        gx = left + gi * group_w + group_w / 2 - (len(SYSTEMS) * bw + (len(SYSTEMS) - 1) * gap) / 2
-        for si, (sys_id, _, color) in enumerate(SYSTEMS):
-            vals = [r["automatic"] for r in rows if r["task"] == task and r["system"] == sys_id and r.get("automatic") is not None]
-            if not vals:
-                continue
-            m = statistics.mean(vals)
-            x = gx + si * (bw + gap)
-            body.append(column(x, bottom, bw, bottom - sy(m), color))
-            if len(vals) > 1:                       # the spread over the runs: min-max whisker
-                body.append(f'<line x1="{x + bw / 2}" x2="{x + bw / 2}" y1="{sy(min(vals))}" y2="{sy(max(vals))}" '
-                            f'stroke="{INK}" stroke-width="1.5" opacity="0.55"/>')
-                for v in (min(vals), max(vals)):
-                    body.append(f'<line x1="{x + bw / 2 - 5}" x2="{x + bw / 2 + 5}" y1="{sy(v)}" y2="{sy(v)}" '
-                                f'stroke="{INK}" stroke-width="1.5" opacity="0.55"/>')
-            body.append(f'<text x="{x + bw / 2}" y="{sy(max(vals)) - 9}" font-size="14" font-weight="650" fill="{INK}" '
-                        f'text-anchor="middle">{m:.0f}</text>')
-        body.append(f'<text x="{left + gi * group_w + group_w / 2}" y="{bottom + 30}" font-size="15" font-weight="600" '
-                    f'fill="{INK}" text-anchor="middle">{escape(tname)}</text>')
-    body.append(f'<line x1="{left}" x2="{w - 28}" y1="{bottom}" y2="{bottom}" stroke="{MUTED}"/>')
-    n = max((r["run"] for r in rows), default=0)
-    body.append(f'<text x="28" y="{h - 16}" font-size="12" fill="{MUTED}">Mean of {n} runs per bar; the whisker spans the '
-                'worst and best run. Measured by a real browser, not judged.</text>')
-    return card(w, h, "".join(body), "Automatic score out of 85", "Same model (ornith-1.5:35b), same machine, same prompts")
+def grid(left: int, right: int, sy) -> str:
+    return "".join(f'<line x1="{left}" x2="{right}" y1="{sy(v):.1f}" y2="{sy(v):.1f}" stroke="{GRID}"/>'
+                   f'<text x="{left - 10}" y="{sy(v) + 4:.1f}" font-size="12" fill="{MUTED}" text-anchor="end">{v}</text>'
+                   for v in (0, 20, 40, 60, 80))
 
 
-def ramp(p: float) -> tuple[str, str]:
-    """Sequential blue for 'share of the points earned'; text colour that stays readable on it."""
-    steps = ["#f3f3f1", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95"]
-    i = min(len(steps) - 1, int(round(p * (len(steps) - 1))))
-    return steps[i], ("#ffffff" if i >= 4 else INK)
-
-
-def criteria_chart(rows: list[dict]) -> str:
-    cols = [(t, s) for t, _ in TASKS for s, _, _ in SYSTEMS]
-    left, top, cw, ch = 300, 128, 72, 30
-    w = left + cw * len(cols) + 28
-    h = top + ch * len(CRITERIA) + 60
+def headline(s: dict) -> str:
+    solo, mc = stats(s["solo"]), stats(s["mc"])
+    first = score("multi-agent-v0.2")["automatic"]
+    tiles = [(f"{first} → {mc['max']}", "on the cafe task, out of 85",
+              "Mission Control, first run → best run"),
+             (f"{mc['clean']}/{mc['n']}", "runs without a single JavaScript error",
+              f"plain single agent: {solo['clean']}/{solo['n']}"),
+             (f"{mc['mean'] - solo['mean']:+.0f}", "points vs a plain single agent",
+              f"mean {mc['mean']:.0f} vs {solo['mean']:.0f} · worst {mc['min']} vs {solo['min']}")]
+    w, tw = 760, 229
     body = []
-    for ti, (task, tname) in enumerate(TASKS):
-        x0 = left + ti * cw * len(SYSTEMS)
-        body.append(f'<text x="{x0 + cw * len(SYSTEMS) / 2}" y="96" font-size="14" font-weight="650" fill="{INK}" '
-                    f'text-anchor="middle">{escape(tname)}</text>')
-        for si, (_, name, color) in enumerate(SYSTEMS):
-            x = x0 + si * cw + cw / 2
-            short = {"mc": "MC", "solo-check": "Solo+chk", "solo": "Solo"}[SYSTEMS[si][0]]
-            body.append(f'<rect x="{x - 26}" y="106" width="8" height="8" rx="2" fill="{color}"/>'
-                        f'<text x="{x - 14}" y="114" font-size="11" fill="{INK2}">{short}</text>')
-    for ri, (cid, cname, mx) in enumerate(CRITERIA):
-        y = top + ri * ch
-        body.append(f'<text x="28" y="{y + 20}" font-size="13" fill="{INK}">{escape(cname)}</text>'
-                    f'<text x="{left - 12}" y="{y + 20}" font-size="11" fill="{MUTED}" text-anchor="end">{cid} · {mx}</text>')
-        for ci, (task, sys_id) in enumerate(cols):
-            vals = [r["points"].get(cid) or 0 for r in rows if r["task"] == task and r["system"] == sys_id and r.get("points")]
-            if not vals:
-                continue
-            p = statistics.mean(vals) / mx
-            fill, txt = ramp(p)
-            body.append(f'<rect x="{left + ci * cw + 1}" y="{y + 1}" width="{cw - 2}" height="{ch - 2}" rx="4" fill="{fill}"/>'
-                        f'<text x="{left + ci * cw + cw / 2}" y="{y + 20}" font-size="12" fill="{txt}" '
-                        f'text-anchor="middle">{p * 100:.0f}%</text>')
-    body.append(f'<text x="28" y="{h - 20}" font-size="12" fill="{MUTED}">Share of each criterion\'s points earned, '
-                'averaged over the runs (MC = Mission Control, Solo+chk = single agent with our checks).</text>')
-    return card(w, h, "".join(body), "Where the points come from", "Every criterion of the rubric, per task and system")
-
-
-def time_chart(rows: list[dict]) -> str:
-    w, left, top, bh, gap = 760, 190, 104, 18, 8
-    groups = len(TASKS)
-    h = top + groups * (len(SYSTEMS) * (bh + gap) + 34) + 40
-    vals_all = [r.get("seconds") or 0 for r in rows]
-    xmax = max(vals_all + [60]) / 60
-    xmax = (int(xmax / 5) + 1) * 5
-    sx = lambda m: left + m / xmax * (w - 60 - left)                                    # noqa: E731
-    body = [legend(28, 90)]
-    y = top
-    for task, tname in TASKS:
-        body.append(f'<text x="28" y="{y + 30}" font-size="14" font-weight="650" fill="{INK}">{escape(tname)}</text>')
-        for sys_id, _, color in SYSTEMS:
-            vals = [r["seconds"] / 60 for r in rows if r["task"] == task and r["system"] == sys_id and r.get("seconds")]
-            if vals:
-                m = statistics.mean(vals)
-                x1 = sx(m)
-                body.append(f'<path d="M{left},{y + 16} H{x1 - 4} Q{x1},{y + 16} {x1},{y + 20} V{y + 16 + bh - 4} '
-                            f'Q{x1},{y + 16 + bh} {x1 - 4},{y + 16 + bh} H{left} Z" fill="{color}"/>'
-                            f'<text x="{x1 + 8}" y="{y + 30}" font-size="12" fill="{INK}">{m:.1f} min</text>')
-            y += bh + gap
-        y += 34
-    body.append(f'<line x1="{left}" x2="{left}" y1="{top + 8}" y2="{y - 30}" stroke="{MUTED}"/>')
-    body.append(f'<text x="28" y="{h - 16}" font-size="12" fill="{MUTED}">Wall-clock minutes from the request to a finished '
-                'project, mean of the runs (waiting for the user\'s approval not counted).</text>')
-    return card(w, h, "".join(body), "Time to a finished project", "Mission Control runs its tasks one after another today")
-
-
-FUNCTIONAL = ("F1", "F2", "F3", "F4", "F5", "F6", "F7")
-
-
-def headline(rows: list[dict]) -> str:
-    """Three numbers for the top of the README, computed from the runs (nothing typed in by hand)."""
-    def of(sys_id):
-        return [r for r in rows if r["system"] == sys_id and r.get("automatic") is not None]
-    mc, solo, chk = of("mc"), of("solo"), of("solo-check")
-    mean = lambda rs: statistics.mean(r["automatic"] for r in rs) if rs else 0                     # noqa: E731
-    full = lambda rs: sum(1 for r in rs if sum((r["points"].get(k) or 0) for k in FUNCTIONAL) == 70)  # noqa: E731
-    tiles = [
-        (f"{mean(mc):.0f}/85", "Mission Control, mean of all runs",
-         f"single agent {mean(solo):.0f} · with our checks {mean(chk):.0f}", SYSTEMS[0][2]),
-        (f"{mean(mc) - mean(solo):+.0f}", "points vs a plain single agent",
-         f"same model, same prompts, {len(mc)} runs each", SYSTEMS[0][2]),
-        (f"{full(mc)}/{len(mc)}", "runs with every feature working",
-         f"single agent {full(solo)}/{len(solo)} · with our checks {full(chk)}/{len(chk)}", SYSTEMS[0][2]),
-    ]
-    w, h, tw = 760, 190, 229
-    body = []
-    for i, (big, label, sub, color) in enumerate(tiles):
+    for i, (big, label, sub) in enumerate(tiles):
         x = 28 + i * (tw + 8)
-        body.append(f'<rect x="{x}" y="76" width="{tw}" height="92" rx="10" fill="#ffffff" stroke="{GRID}"/>'
-                    f'<rect x="{x}" y="76" width="5" height="92" rx="2" fill="{color}"/>'
-                    f'<text x="{x + 20}" y="116" font-size="34" font-weight="700" fill="{INK}">{escape(big)}</text>'
-                    f'<text x="{x + 20}" y="138" font-size="12.5" fill="{INK}">{escape(label)}</text>'
-                    f'<text x="{x + 20}" y="156" font-size="11.5" fill="{MUTED}">{escape(sub)}</text>')
-    return card(w, h, "".join(body), "Mission Control vs a single agent",
-                "Two web-app tasks, ornith-1.5:35b on one local GPU, scored by a real browser")
+        body.append(f'<rect x="{x}" y="80" width="{tw}" height="96" rx="10" fill="#ffffff" stroke="{GRID}"/>'
+                    f'<rect x="{x}" y="80" width="5" height="96" rx="2" fill="{BLUE}"/>'
+                    f'<text x="{x + 20}" y="121" font-size="32" font-weight="700" fill="{INK}">{escape(big)}</text>'
+                    f'<text x="{x + 20}" y="145" font-size="12.5" fill="{INK}">{escape(label)}</text>'
+                    f'<text x="{x + 20}" y="163" font-size="11.5" fill="{MUTED}">{escape(sub)}</text>')
+    return card(w, 200, "".join(body), "A local 35B model that builds web apps which actually work",
+                "ornith-1.5:35b on one GPU via Ollama · scored by a real browser, not by the agents")
 
 
-def gallery(rows: list[dict], task: str) -> Path | None:
-    """The desktop page of each system's median run, side by side."""
-    from PIL import Image, ImageDraw, ImageFont
-    shots = []
-    for sys_id, name, color in SYSTEMS:
-        runs = sorted((r for r in rows if r["task"] == task and r["system"] == sys_id and r.get("automatic") is not None),
-                      key=lambda r: r["automatic"])
-        if not runs:
-            return None
-        med = runs[len(runs) // 2]
-        folder = BENCH / f"{task}-{sys_id}-{med['run']}"
-        img = next((folder / f for f in ("1_landing_desktop.png", "2_board_after_add_desktop.png", "1_board_desktop.png")
-                    if (folder / f).is_file()), None)
-        if img is None:
-            return None
-        shots.append((name, color, med["automatic"], Image.open(img).convert("RGB")))
-    tw, th, pad, head = 560, 620, 24, 56
-    out = Image.new("RGB", (pad + len(shots) * (tw + pad), head + th + pad), SURFACE)
-    draw = ImageDraw.Draw(out)
-    try:
-        font = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", 20)
-    except OSError:
-        font = ImageFont.load_default()
-    for i, (name, color, pts, im) in enumerate(shots):
-        x = pad + i * (tw + pad)
-        crop = im.crop((0, 0, im.width, min(im.height, int(im.width * th / tw))))
-        crop = crop.resize((tw, int(crop.height * tw / crop.width)))
-        out.paste(crop, (x, head))
-        draw.rounded_rectangle((x, 18, x + 14, 32), radius=3, fill=color)
-        draw.text((x + 22, 12), f"{name} — {pts}/85", fill=INK, font=font)
-    path = BENCH / f"gallery_{task}.png"
-    out.save(path, optimize=True)
-    return path
+VERSIONS = [("v0.2", "multi-agent-v0.2", "first run"), ("v0.3", "multi-agent-v0.3", "team, output cap"),
+            ("v0.4", "multi-agent-v0.4", "(a bad run)"), ("v0.5", "multi-agent-v0.5", "browser check"),
+            ("v0.6", "multi-agent-v0.6", "history fix"), ("v0.7", "multi-agent-v0.7", "CSS checks")]
 
 
-def summary(rows: list[dict]) -> str:
-    lines = ["| task | system | runs | automatic /85 (mean, min–max) | all functional points | minutes | tokens out |",
-             "|---|---|---|---|---|---|---|"]
-    for task, tname in TASKS:
-        for sys_id, name, _ in SYSTEMS:
-            rs = [r for r in rows if r["task"] == task and r["system"] == sys_id and r.get("automatic") is not None]
-            if not rs:
-                continue
-            a = [r["automatic"] for r in rs]
-            full = sum(1 for r in rs if sum((r["points"].get(k) or 0) for k in FUNCTIONAL) == 70)
-            mins = statistics.mean(r.get("seconds") or 0 for r in rs) / 60
-            tok = statistics.mean(r.get("tokens_out") or 0 for r in rs)
-            lines.append(f"| {tname} | {name} | {len(rs)} | **{statistics.mean(a):.1f}** ({min(a)}–{max(a)}) | "
-                         f"{full}/{len(rs)} | {mins:.1f} | {tok / 1000:.0f}k |")
-    return "\n".join(lines)
+def progress(solo_mean: float) -> str:
+    bench = [r for r in rows("bench") if r["system"] == "mc" and r["task"] == "cafe"]
+    pts = [(v, score(label)["automatic"], note) for v, label, note in VERSIONS]
+    if bench:
+        pts.append(("v1.0", bench[0]["automatic"], "link, data checks"))
+    w, h, top, bottom, left = 760, 400, 104, 320, 64
+    sy = lambda v: bottom - v / 85 * (bottom - top)                                          # noqa: E731
+    body = [grid(left, w - 28, sy)]
+    step = (w - 28 - left) / len(pts)
+    for i, (v, a, note) in enumerate(pts):
+        x = left + i * step + step / 2 - 14
+        body.append(column(x, bottom, 28, bottom - sy(a), BLUE))
+        body.append(f'<text x="{x + 14}" y="{sy(a) - 8:.1f}" font-size="14" font-weight="650" fill="{INK}" '
+                    f'text-anchor="middle">{a}</text>'
+                    f'<text x="{x + 14}" y="{bottom + 22}" font-size="13" font-weight="600" fill="{INK}" '
+                    f'text-anchor="middle">{v}</text>'
+                    f'<text x="{x + 14}" y="{bottom + 40}" font-size="11" fill="{MUTED}" text-anchor="middle">'
+                    f'{escape(note)}</text>')
+    y = sy(solo_mean)
+    body.append(f'<line x1="{left}" x2="{w - 28}" y1="{y:.1f}" y2="{y:.1f}" stroke="{AQUA}" stroke-width="2"/>'
+                f'<line x1="{w - 250}" x2="{w - 232}" y1="80" y2="80" stroke="{AQUA}" stroke-width="2"/>'
+                f'<text x="{w - 226}" y="84" font-size="12" fill="{INK2}">plain single agent, mean {solo_mean:.0f}</text>')
+    body.append(f'<line x1="{left}" x2="{w - 28}" y1="{bottom}" y2="{bottom}" stroke="{MUTED}"/>')
+    return card(w, h, "".join(body), "Mission Control on the cafe task, version by version",
+                "Automatic score out of 85, one live run per version; each step fixes a failure seen in the run before")
+
+
+def compare(s: dict) -> str:
+    sets = [("Single agent", AQUA, stats(s["solo"])), ("Single agent + our checks", ORANGE, stats(s["check"])),
+            ("Mission Control", BLUE, stats(s["mc"]))]
+    w, h, top, bottom, left = 760, 430, 92, 300, 64
+    sy = lambda v: bottom - v / 85 * (bottom - top)                                          # noqa: E731
+    body = [grid(left, w - 28, sy)]
+    step = (w - 28 - left) / len(sets)
+    for i, (name, color, st) in enumerate(sets):
+        cx = left + i * step + step / 2
+        body.append(column(cx - 14, bottom, 28, bottom - sy(st["mean"]), color))
+        body.append(f'<line x1="{cx}" x2="{cx}" y1="{sy(st["min"]):.1f}" y2="{sy(st["max"]):.1f}" stroke="{INK}" '
+                    f'stroke-width="1.5" opacity="0.55"/>')
+        for v in (st["min"], st["max"]):
+            body.append(f'<line x1="{cx - 6}" x2="{cx + 6}" y1="{sy(v):.1f}" y2="{sy(v):.1f}" stroke="{INK}" '
+                        f'stroke-width="1.5" opacity="0.55"/>')
+        body.append(f'<text x="{cx + 12}" y="{sy(st["mean"]) - 6:.1f}" font-size="14" font-weight="650" fill="{INK}">'
+                    f'{st["mean"]:.0f}</text>'
+                    f'<rect x="{cx - 70}" y="{bottom + 14}" width="10" height="10" rx="2" fill="{color}"/>'
+                    f'<text x="{cx - 54}" y="{bottom + 24}" font-size="13" font-weight="600" fill="{INK}">{escape(name)}</text>'
+                    f'<text x="{cx - 70}" y="{bottom + 46}" font-size="12" fill="{INK2}">every feature works: '
+                    f'{st["works"]}/{st["n"]} runs</text>'
+                    f'<text x="{cx - 70}" y="{bottom + 64}" font-size="12" fill="{INK2}">no JS errors: '
+                    f'{st["clean"]}/{st["n"]} runs</text>'
+                    f'<text x="{cx - 70}" y="{bottom + 82}" font-size="12" fill="{INK2}">worst run: {st["min"]}</text>')
+    body.append(f'<line x1="{left}" x2="{w - 28}" y1="{bottom}" y2="{bottom}" stroke="{MUTED}"/>')
+    body.append(f'<text x="28" y="{h - 14}" font-size="11.5" fill="{MUTED}">Mean score out of 85 (whisker: worst to best '
+                'run), cafe and task board runs together. Which runs count: eval/make_report.py.</text>')
+    return card(w, h, "".join(body), "Same model, three set-ups",
+                "The checks make the result dependable; on these small apps, extra agents add little")
 
 
 def main() -> None:
-    rows = load()
-    (BENCH / "score.svg").write_text(score_chart(rows), encoding="utf-8", newline="\n")
-    (BENCH / "criteria.svg").write_text(criteria_chart(rows), encoding="utf-8", newline="\n")
-    (BENCH / "time.svg").write_text(time_chart(rows), encoding="utf-8", newline="\n")
-    (BENCH / "headline.svg").write_text(headline(rows), encoding="utf-8", newline="\n")
-    for task, _ in TASKS:
-        gallery(rows, task)
-    text = summary(rows)
-    (BENCH / "summary.md").write_text(text + "\n", encoding="utf-8", newline="\n")
-    sys.stdout.reconfigure(encoding="utf-8")
-    print(text)
+    s = systems()
+    OUT.mkdir(parents=True, exist_ok=True)
+    solo_mean = stats(s["solo"])["mean"]
+    for name, svg in (("results-headline", headline(s)), ("results-versions", progress(solo_mean)),
+                      ("results-systems", compare(s))):
+        (OUT / f"{name}.svg").write_text(svg, encoding="utf-8", newline="\n")
+    for k, rs in s.items():
+        print(k, stats(rs), [r["automatic"] for r in rs])
 
 
 if __name__ == "__main__":

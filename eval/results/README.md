@@ -103,6 +103,36 @@ not verified, and 7–15 minutes against 4.
 longer measures independently what the engine checks: new tasks the engine was not developed against are needed to
 show the gain is general. The single agent got no browser check; giving it one would be the fair next comparison.
 
+## 2026-11-02 — benchmark: three set-ups, two tasks (stopped early)
+
+A second task the engine was not developed against (`eval/tasks/taskboard.md`, rubric and scorer written and
+committed before its first run) and a fair single agent: `scripts/solo_agent.py --check` gives it Mission Control's
+project check. Runner: `eval/run_matrix.py`; charts: `eval/make_report.py` (it lists exactly which runs count).
+
+The plan was 3 runs × 3 set-ups × 2 tasks. It was stopped after about four hours with fewer runs, because the
+benchmark kept finding bugs **in the check itself**, and each fix restarted the checked set-ups (honest record):
+
+| folder | code | what happened |
+|---|---|---|
+| `bench-pilot` | `72ac24d` | Mission Control's navigation linked to `/menu`, the pages were `/menu.html`: the check never clicked links → link check added (`584d70e`) |
+| `bench-pilot2` | `584d70e` | a single agent hard-coded the temporary port the check reported (15/85) → the port is no longer shown (`8b60c01`); a second runner started by another session corrupted one run |
+| `bench-pilot3` | `8b60c01` | ids in URLs (`/api/tasks/${id}`) reported as missing routes, an empty API answer while the data file was full, an icon link in `<body>` → fixed (`ff38b84`) |
+| `bench` | `ff38b84` | plain single agent 4 runs (its code never changed, so those runs were kept), single agent + checks 2, Mission Control 1 |
+
+All runs with the browser check in place (scores out of 85, automatic):
+
+| set-up | runs | scores | mean | every feature works | no JS errors | minutes (mean) |
+|---|---|---|---|---|---|---|
+| single agent | 6 | 70 75 53 47 75 40 | **60** | 3/6 | 1/6 | 3 |
+| single agent + our checks | 6 | 75 75 70 63 68 75 | **71** | 4/6 | 4/6 | 9 |
+| Mission Control | 7 | 75 78 80 50 80 80 75 | **74** | 5/7 | 6/7 | 12 |
+
+What it says: the verification layer is what makes the result dependable (the worst run goes from 40 to 63, JS-error-
+free runs from 1/6 to 4/6); with the same checks, Mission Control's lead and team add little on apps this small
+(+3 on average, one bad run of 50 caused by a data bug the check did not yet catch) and cost time. Small samples,
+mixed code versions (listed above): read it as a direction, not a statistic. Next measurements worth making: a larger
+task, a strong API model as the lead with local workers (cost in dollars), and a reviewer agent.
+
 ### What to build from it
 1. Real verification (phase 6): run the project the way this scorer does (start the server, load the pages, read the
    console) and send failures back to the responsible agent. The scorer is a ready prototype of that verifier.

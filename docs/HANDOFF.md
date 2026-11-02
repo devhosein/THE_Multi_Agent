@@ -6,13 +6,19 @@ what is not, and what to build next. Written to continue the work in Claude Code
 
 ---
 
-## 0. Where we are (2026-11-02, 14:30) — read this first
+## 0. Where we are (2026-11-02, night) — read this first
 
-**Result:** since the browser check, three live runs in a row beat the single agent on the cafe task:
-**91, 87, 88** vs **85** (first multi-agent run: 53). Every functional point and no JavaScript errors in all three.
-Details per run: `eval/results/README.md`; every failure and its fix: `docs/FAILURES.md` rows 9–17.
-Committed locally on 2026-11-02, not pushed (last pushed commit: `32dec13`). 299 unit tests
-(+16 Node, 124 e2e with Edge) green. Server stopped after the last run.
+**Result, measured** (`eval/results/README.md`, charts in the README): Mission Control on the cafe task went from 40
+to 75–80 out of 85; over two tasks it averages 74 vs 60 for a plain single agent, 6/7 runs without a JavaScript error
+vs 1/6. **But** a single agent given the same checks averages 71: the gain is the verification layer, not the number
+of agents, and Mission Control is slower (12 min vs 9 vs 3). The benchmark was stopped early (fewer runs than
+planned; the reasons are recorded). Everything is committed and pushed. 305 unit tests (+16 Node, 124 e2e).
+
+**Decided with the user:** this repository is wrapped up as "a verification layer that makes local models
+dependable". Next, a **new project and repository** on the same platform that focuses on the verification /
+supervision layer. Rules for it, learned the hard way today: time-box every benchmark and agree the plan first;
+never change the code while a benchmark runs (collect findings, fix afterwards); check running processes, not tool
+notifications; one runner only.
 
 **What changed today, each from a live-run failure (v4–v9):**
 - `llm.py`: output capped (`num_predict` 32,768; never `num_ctx`): runaway answers no longer hit the 600 s timeout;

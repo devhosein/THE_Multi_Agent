@@ -20,7 +20,7 @@ Read this first, then `docs/HANDOFF.md` for the full history, decisions and next
 ## Commands
 ```powershell
 python scripts/serve.py                         # the app: http://127.0.0.1:8765 (Live = Ollama, Demo = recorded run)
-python -m unittest discover -s tests -t .       # 299 tests, ~2 min, stdlib only (browser-check tests need Playwright)
+python -m unittest discover -s tests -t .       # 305 tests, ~2 min, stdlib only (browser-check tests need Playwright)
 node --test tests/ui_state.test.mjs             # UI reducer (Node >= 18)
 python tests/e2e_ui.py                          # real browser, 124 checks (+ --browser msedge on this machine)
 python scripts/run_engine.py --project C:\tmp\x --prompt "..." [--model ornith-1.5:35b] [--approve-plan] [--strength small]
@@ -89,6 +89,7 @@ separate process) · `textview.py` · `ui/` (`index.html`, `app.js`, `state.js`,
 `tests/helpers.py` has `ScriptedLLM` / `OllamaStandIn`: a scripted model to test the engine without Ollama.
 
 ## Current status
-Phases 0–2 done plus the post-live-test hardening, the integration work and the optional browser check. Unit,
-reducer and e2e tests pass on the user's Windows machine. **Live runs on the cafe task (35B): since the browser check
-91, 87, 88 vs the single agent's 85** (`eval/results/README.md`). Open items and the next step: `docs/HANDOFF.md` §0.
+Phases 0–2 done plus the integration work, the optional browser check and a benchmark (`eval/`). Measured: the
+verification layer lifts results (Mission Control 40 → 75–80/85; 74 vs 60 for a plain single agent), but a single
+agent with the same checks scores 71: more agents add little on small apps. This repository is wrapped up; the next
+project (a new repository) focuses on the verification layer. Details and rules: `docs/HANDOFF.md` §0.
